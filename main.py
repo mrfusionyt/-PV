@@ -29,7 +29,7 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.6.0"
+CURRENT_VERSION = "1.6.1"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 INSTALL_DIR = r"C:\!PV" 
@@ -56,6 +56,8 @@ dialog_req = queue.Queue()
 dialog_res = queue.Queue()
 tk_root = None
 status_label = None
+update_btn = None
+pending_update_url = None
 quit_requested = threading.Event()
 ignored_version = None
 
@@ -151,8 +153,9 @@ def check_for_updates():
                     download_url = asset['browser_download_url']
                     break
             
-            if tk_root:
-                tk_root.after(0, lambda: show_update_dialog(latest_version, release_url, download_url))
+            if tk_root and download_url:
+                # Вызываем показ кнопки обновления в главном потоке
+                tk_root.after(0, lambda: show_update_indicator(latest_version, download_url))
     except Exception as e:
         print(f"Update check error: {e}")
 
@@ -163,27 +166,25 @@ def update_loop():
             if quit_requested.is_set(): break
             time.sleep(1)
 
-def show_update_dialog(latest_version, release_url, download_url):
-    global ignored_version
-    msg = (f"A new version is available: {latest_version}\n"
-           f"Your version: {CURRENT_VERSION}\n\n"
-           f"Download and install automatically?")
-    
-    if not getattr(sys, 'frozen', False) or not download_url:
-        ans = messagebox.askyesno("Update Available!", f"{msg}\n\n(Will open browser)", parent=tk_root)
-        if ans: 
-            webbrowser.open(release_url)
-        else:
-            ignored_version = latest_version
-        return
-
-    ans = messagebox.askyesno("Update Available!", msg, parent=tk_root)
-    if ans:
+def show_update_indicator(latest_version, download_url):
+    global pending_update_url
+    pending_update_url = download_url
+    if update_btn:
+        update_btn.config(text=f"⬇ Update to v{latest_version}", bg="#2d7d46")
+        update_btn.pack(pady=(5, 5), before=update_btn.master.winfo_children()[3]) # Вставляем перед IP-адресами
         if status_label:
-            status_label.config(text="Downloading update...", fg="#ff3b5c")
-        threading.Thread(target=download_and_update, args=(download_url,), daemon=True).start()
-    else:
-        ignored_version = latest_version
+            status_label.config(text="Update Available!", fg="#ff3b5c")
+
+def trigger_update():
+    global pending_update_url
+    if not pending_update_url: return
+    
+    if update_btn:
+        update_btn.config(state=tk.DISABLED, text="Downloading...", bg="#666666")
+    if status_label:
+        status_label.config(text="Downloading update...", fg="#ff3b5c")
+        
+    threading.Thread(target=download_and_update, args=(pending_update_url,), daemon=True).start()
 
 def download_and_update(download_url):
     try:
@@ -308,7 +309,6 @@ def api_image():
     
     if thumb:
         try:
-            # На лету уменьшаем фото для быстрой загрузки в браузере
             img = Image.open(path)
             img.thumbnail((1920, 1080), Image.LANCZOS)
             if img.mode not in ("RGB", "L"):
@@ -318,7 +318,7 @@ def api_image():
             buf.seek(0)
             return send_file(buf, mimetype='image/jpeg')
         except Exception:
-            pass # Если не удалось сжать (например, битый файл), отдаем оригинал
+            pass
             
     return send_file(path)
 
@@ -389,7 +389,7 @@ def api_delete():
     path = os.path.join(state['source'], name)
     if not os.path.isfile(path): return jsonify({'ok': False, 'error': 'File not found'})
     try: 
-        send2trash.send2trash(path) # Отправляем в Корзину!
+        send2trash.send2trash(path)
     except Exception as e: 
         return jsonify({'ok': False, 'error': str(e)})
     scan_source()
@@ -442,7 +442,7 @@ def create_dark_button(parent, text, command, is_primary=False):
     return btn
 
 def main():
-    global tk_root, status_label
+    global tk_root, status_label, update_btn
 
     load_config()
     if len(sys.argv) > 1:
@@ -457,7 +457,7 @@ def main():
 
     tk_root = tk.Tk()
     tk_root.title('PhotoClassifier')
-    tk_root.geometry('380x380')
+    tk_root.geometry('420x340')
     tk_root.resizable(False, False)
     tk_root.configure(bg='#141418')
 
@@ -467,21 +467,29 @@ def main():
     except Exception: pass
 
     status_label = tk.Label(tk_root, text='Application is running.', bg='#141418', fg='#ffffff', font=('Segoe UI', 12, 'bold'))
-    status_label.pack(pady=(20, 10))
+    status_label.pack(pady=(20, 5))
     
     tk.Label(tk_root, text=f'Version {CURRENT_VERSION}', bg='#141418', fg='#666666', font=('Segoe UI', 9)).pack()
-    tk.Label(tk_root, text='On this PC:', bg='#141418', fg='#888888', font=('Segoe UI', 9)).pack(pady=(10, 0))
-    tk.Label(tk_root, text=local_url, bg='#141418', fg='#ff3b5c', font=('Consolas', 12, 'bold')).pack(pady=(2, 15))
+
+    # Скрытая кнопка для обновления
+    update_btn = create_dark_button(tk_root, '', trigger_update, is_primary=True)
+    update_btn.config(bg="#2d7d46", activebackground="#369b56") # Зеленая кнопка для обновления
+    update_btn.bind('<Enter>', lambda e: update_btn.config(bg='#369b56'))
+    update_btn.bind('<Leave>', lambda e: update_btn.config(bg='#2d7d46'))
 
     if lan_ips:
-        tk.Label(tk_root, text='From local network / VPN:', bg='#141418', fg='#888888', font=('Segoe UI', 9)).pack()
+        tk.Label(tk_root, text='From local network / VPN:', bg='#141418', fg='#888888', font=('Segoe UI', 9)).pack(pady=(10, 0))
         urls_frame = tk.Frame(tk_root, bg='#1e1e24', padx=15, pady=10)
         urls_frame.pack(pady=(5, 15), fill='x', padx=40)
         for ip in lan_ips:
             tk.Label(urls_frame, text=f'http://{ip}:{port}', bg='#1e1e24', fg='#ff3b5c', font=('Consolas', 11)).pack(anchor='w')
 
-    create_dark_button(tk_root, 'Open in browser', lambda: webbrowser.open(local_url), is_primary=True).pack(pady=(10, 8))
-    create_dark_button(tk_root, 'Exit', lambda: quit_requested.set()).pack(pady=(0, 20))
+    # Контейнер для кнопок (в один ряд)
+    btn_frame = tk.Frame(tk_root, bg='#141418')
+    btn_frame.pack(pady=(10, 20))
+
+    create_dark_button(btn_frame, 'Open in browser', lambda: webbrowser.open(local_url), is_primary=True).pack(side=tk.LEFT, padx=5)
+    create_dark_button(btn_frame, 'Exit', lambda: quit_requested.set()).pack(side=tk.LEFT, padx=5)
 
     tk_root.protocol('WM_DELETE_WINDOW', lambda: quit_requested.set())
 
@@ -534,7 +542,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
   #toolbar button:active { background: #4a4a4a; }
   #brightness-value { font-family: Consolas, monospace; color: #ccc; font-size: 16px; min-width: 60px; text-align: center; }
   
-  /* НОВОЕ: Поле для прыжка к фото */
   #jump-input { width: 60px; height: 38px; background: #111; color: #fff; border: 1px solid #555; border-radius: 6px; text-align: center; font-family: Consolas, monospace; font-size: 14px; margin-left: 10px; }
   #jump-input:focus { outline: none; border-color: #ff3b5c; }
 
@@ -615,7 +622,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     <button id="b-up" title="Brighter (↑)">☀+</button>
     <button id="b-reset" title="Reset brightness (R)">↺</button>
     
-    <!-- НОВОЕ: Прыжок к фото -->
     <input type="number" id="jump-input" min="1" placeholder="#">
     
     <span id="counter"></span>
@@ -676,7 +682,6 @@ let currentIndex = 0;
 let settings = { source: '', not_nude: '', nude: '', label_not_nude: 'Not Nude', label_nude: 'Nude' };
 let brightness = 1.0;
 
-// Переменные для зума
 let scale = 1.0;
 let translateX = 0, translateY = 0;
 let isDragging = false;
@@ -689,7 +694,6 @@ async function loadState() {
   const data = await r.json();
   images = data.images || [];
   
-  // Восстанавливаем последнюю позицию
   const savedIndex = localStorage.getItem('lastPhotoIndex');
   if (savedIndex !== null && parseInt(savedIndex) < images.length) {
     currentIndex = parseInt(savedIndex);
@@ -727,7 +731,6 @@ function render() {
   const img = $('photo'); const ph = $('photo-placeholder'); const counter = $('counter'); const btnNN = $('btn-not-nude'); const btnN = $('btn-nude');
   const progressBar = $('progress-bar');
   
-  // Сброс зума при смене фото
   scale = 1.0; translateX = 0; translateY = 0;
   applyTransform();
 
@@ -743,21 +746,17 @@ function render() {
   
   const name = images[currentIndex];
   
-  // Загружаем через новый эндпоинт с параметром thumb=1 (сжатие)
   img.src = '/api/image?name=' + encodeURIComponent(name) + '&thumb=1&t=' + Date.now();
   
   img.style.display = 'block'; ph.style.display = 'none';
   counter.textContent = (currentIndex + 1) + ' / ' + images.length + ' — ' + name; counter.title = name;
   btnNN.disabled = false; btnN.disabled = false; applyBrightness();
   
-  // Обновляем полосу прогресса
   const progressPercent = ((currentIndex + 1) / images.length) * 100;
   progressBar.style.width = progressPercent + '%';
 
-  // Сохраняем позицию в localStorage
   localStorage.setItem('lastPhotoIndex', currentIndex);
 
-  // ПРЕДЗАГРУЗКА следующего фото
   if (images.length > 1) {
       const nextIndex = (currentIndex + 1) % images.length;
       const nextName = images[nextIndex];
@@ -793,7 +792,6 @@ function jumpToImage() {
     $('jump-input').blur();
 }
 
-// Функция для зума
 function applyTransform() {
     const img = $('photo');
     if (img) {
@@ -801,7 +799,6 @@ function applyTransform() {
     }
 }
 
-// Слушатель колесика мыши для зума и навигации
 $('img-container').addEventListener('wheel', (e) => {
     if (images.length === 0) return;
     if (e.ctrlKey) return;
@@ -818,7 +815,6 @@ $('img-container').addEventListener('wheel', (e) => {
     }
 }, { passive: false });
 
-// Перетаскивание (Pan)
 $('img-container').addEventListener('mousedown', (e) => {
     if (scale > 1.0) {
         isDragging = true;
@@ -839,7 +835,6 @@ window.addEventListener('mouseup', () => {
     $('photo').style.cursor = 'default';
 });
 
-// Pinch to zoom
 let initialDistance = 0;
 $('img-container').addEventListener('touchstart', (e) => {
     if (e.touches.length === 2) {
@@ -980,7 +975,7 @@ function toast(msg, isError) {
   }, { passive: true });
   main.addEventListener('touchend', (e) => {
     if (!tracking) return; tracking = false;
-    if (scale > 1.0) return; // Отключаем свайп, если фото приближено
+    if (scale > 1.0) return;
     const t = e.changedTouches[0]; const dx = t.clientX - startX; const dy = t.clientY - startY;
     if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
     if (dx < 0) nextImage(); else prevImage();
