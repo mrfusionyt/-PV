@@ -31,7 +31,7 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.8.1"
+CURRENT_VERSION = "1.8.2"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 # =====================================================================
@@ -684,7 +684,9 @@ HTML_PAGE = r'''<!DOCTYPE html>
 <link rel="icon" type="image/png" href="/favicon.ico">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; overflow: hidden; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
+  
+  /* Отключаем стандартные жесты браузера для всей страницы */
+  html, body { height: 100%; overflow: hidden; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; touch-action: none; }
   body { background: #111; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
   
   #progress-container { position: absolute; top: 0; left: 0; width: 100%; height: 3px; background: #333; z-index: 10; }
@@ -698,9 +700,16 @@ HTML_PAGE = r'''<!DOCTYPE html>
   header button:disabled { opacity: 0.35; cursor: not-allowed; }
   
   #main { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; padding: 6px; touch-action: none; min-height: 0; }
-  #img-container { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  #img-container { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
   
-  #photo { max-width: 100%; max-height: 100%; object-fit: contain; display: none; user-select: none; -webkit-user-drag: none; transition: filter 0.1s linear; will-change: filter, transform; transform-origin: center center; }
+  /* ОТКЛЮЧАЕМ выделение и перетаскивание картинки браузером */
+  #photo { 
+    max-width: 100%; max-height: 100%; object-fit: contain; display: none; 
+    user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;
+    -webkit-user-drag: none; -khtml-user-drag: none; -moz-user-drag: none; -o-user-drag: none;
+    transition: filter 0.1s linear; will-change: filter, transform; transform-origin: center center; 
+    pointer-events: none; /* Картинка не перехватывает касания, все события ловит контейнер */
+  }
   
   #photo-placeholder { color: #666; font-size: 16px; text-align: center; padding: 30px; }
   
@@ -710,7 +719,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
   #prev { left: 0; border-radius: 0 10px 10px 0; }
   #next { right: 0; border-radius: 10px 0 0 10px; }
   
-  #toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #1a1a1a; border-top: 1px solid #333; justify-content: center; flex-wrap: wrap; z-index: 5; position: relative; }
+  #toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #1a1a1a; border-top: 1px solid #333; justify-content: center; flex-wrap: wrap; z-index: 5; position: relative; touch-action: manipulation; }
   #toolbar button { background: #2a2a2a; color: #eee; border: 1px solid #444; width: 48px; height: 48px; border-radius: 8px; cursor: pointer; font-size: 22px; font-weight: 600; touch-action: manipulation; display: flex; align-items: center; justify-content: center; }
   #toolbar button:hover { background: #3a3a3a; }
   #toolbar button:active { background: #4a4a4a; }
@@ -725,7 +734,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     white-space: nowrap; 
   }
   
-  footer { display: flex; gap: 20px; padding: 16px 24px; justify-content: center; background: #1a1a1a; border-top: 1px solid #333; flex-wrap: wrap; z-index: 5; position: relative; }
+  footer { display: flex; gap: 20px; padding: 16px 24px; justify-content: center; background: #1a1a1a; border-top: 1px solid #333; flex-wrap: wrap; z-index: 5; position: relative; touch-action: manipulation; }
   .action-btn { padding: 42px 96px; font-size: 48px; font-weight: 700; border: none; border-radius: 14px; cursor: pointer; min-width: 280px; letter-spacing: 1px; transition: transform 0.1s, filter 0.15s; touch-action: manipulation; box-shadow: 0 4px 12px rgba(0,0,0,0.4); word-break: break-word; }
   .action-btn:active { transform: scale(0.97); }
   .action-btn:disabled { opacity: 0.35; cursor: not-allowed; }
@@ -734,7 +743,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
   #btn-nude { background: #2d7d46; color: #fff; }
   #btn-nude:hover:not(:disabled) { filter: brightness(1.15); }
   
-  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 100; padding: 16px; touch-action: auto; }
   .modal-bg.open { display: flex; }
   .modal { background: #1e1e1e; border: 1px solid #444; border-radius: 12px; padding: 22px; width: 640px; max-width: 100%; max-height: 90vh; overflow-y: auto; }
   .modal h2 { margin-bottom: 16px; font-size: 18px; }
@@ -859,6 +868,12 @@ let brightness = 1.0;
 let scale = 1.0;
 let translateX = 0, translateY = 0;
 
+// Переменные для тач-событий
+let touchMode = 'none'; 
+let initialDistance = 0;
+let touchStartX = 0, touchStartY = 0;
+let dragStartTouchX = 0, dragStartTouchY = 0;
+
 const $ = (id) => document.getElementById(id);
 
 async function loadState() {
@@ -960,11 +975,10 @@ function applyTransform() {
     const img = $('photo');
     if (img) {
         img.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
-        if (scale > 1.0) $('img-container').style.cursor = 'grab';
-        else $('img-container').style.cursor = 'default';
     }
 }
 
+// ---------------- Логика для ПК (Мышка) ----------------
 $('img-container').addEventListener('wheel', (e) => {
     if (images.length === 0) return;
     if (e.ctrlKey) return;
@@ -984,7 +998,8 @@ $('img-container').addEventListener('wheel', (e) => {
 let isDragging = false, dragStartX = 0, dragStartY = 0;
 $('img-container').addEventListener('mousedown', (e) => {
     if (scale > 1.0) {
-        e.preventDefault(); isDragging = true;
+        e.preventDefault();
+        isDragging = true;
         dragStartX = e.clientX - translateX; dragStartY = e.clientY - translateY;
         $('img-container').style.cursor = 'grabbing';
     }
@@ -1000,20 +1015,25 @@ window.addEventListener('mouseup', () => {
     if (isDragging) { isDragging = false; $('img-container').style.cursor = 'grab'; }
 });
 
-let touchMode = 'none', touchStartX = 0, touchStartY = 0;
-let dragStartTouchX = 0, dragStartTouchY = 0, initialDistance = 0;
-
+// ---------------- Логика для Телефона (Тач) ----------------
 $('img-container').addEventListener('touchstart', (e) => {
-    if (e.touches.length === 1) {
-        touchStartX = e.touches[0].clientX; touchStartY = e.touches[0].clientY;
+    if (images.length === 0) return;
+    if (e.touches.length === 2) {
+        touchMode = 'pinch';
+        initialDistance = Math.hypot(
+            e.touches[0].pageX - e.touches[1].pageX,
+            e.touches[0].pageY - e.touches[1].pageY
+        );
+    } else if (e.touches.length === 1) {
         if (scale > 1.0) {
             touchMode = 'drag';
             dragStartTouchX = e.touches[0].clientX - translateX;
             dragStartTouchY = e.touches[0].clientY - translateY;
-        } else { touchMode = 'swipe'; }
-    } else if (e.touches.length === 2) {
-        touchMode = 'pinch';
-        initialDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+        } else {
+            touchMode = 'swipe';
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+        }
     }
 }, { passive: false });
 
@@ -1025,7 +1045,10 @@ $('img-container').addEventListener('touchmove', (e) => {
         applyTransform();
     } else if (touchMode === 'pinch' && e.touches.length === 2) {
         e.preventDefault();
-        const currentDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+        const currentDistance = Math.hypot(
+            e.touches[0].pageX - e.touches[1].pageX,
+            e.touches[0].pageY - e.touches[1].pageY
+        );
         if (initialDistance > 0) {
             scale = Math.max(1.0, Math.min(5.0, scale * (currentDistance / initialDistance)));
             if (scale === 1.0) { translateX = 0; translateY = 0; }
@@ -1037,11 +1060,19 @@ $('img-container').addEventListener('touchmove', (e) => {
 
 $('img-container').addEventListener('touchend', (e) => {
     if (touchMode === 'swipe') {
-        const t = e.changedTouches[0]; const dx = t.clientX - touchStartX; const dy = t.clientY - touchStartY;
-        if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) { if (dx < 0) nextImage(); else prevImage(); }
+        const t = e.changedTouches[0];
+        const dx = t.clientX - touchStartX;
+        const dy = t.clientY - touchStartY;
+        if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) {
+            if (dx < 0) nextImage(); else prevImage();
+        }
     }
-    if (e.touches.length === 0) touchMode = 'none';
+    if (e.touches.length === 0) {
+        touchMode = 'none';
+    }
 }, { passive: false });
+
+// ---------------- API Функции ----------------
 
 async function classify(category) {
   if (images.length === 0) return;
