@@ -345,21 +345,26 @@ def api_image():
     if not os.path.isfile(path): return 'not found', 404
     
     if thumb:
-        cache_dir = os.path.join(state['source'], '.cache')
-        os.makedirs(cache_dir, exist_ok=True)
-        
-        h = hashlib.md5(path.encode('utf-8')).hexdigest()
-        cache_path = os.path.join(cache_dir, h + ".jpg")
-        
-        if os.path.exists(cache_path):
-            return send_file(cache_path, mimetype='image/jpeg')
-            
         try:
             img = Image.open(path)
-            img.thumbnail((1920, 1080), Image.LANCZOS)
+            # ОПТИМИЗАЦИЯ: Если фото уже маленькое, не сжимаем его, а отдаем оригинал
+            if img.width <= 1920 and img.height <= 1920:
+                return send_file(path)
+            
+            cache_dir = os.path.join(state['source'], '.cache')
+            os.makedirs(cache_dir, exist_ok=True)
+            
+            h = hashlib.md5(path.encode('utf-8')).hexdigest()
+            cache_path = os.path.join(cache_dir, h + ".jpg")
+            
+            if os.path.exists(cache_path):
+                return send_file(cache_path, mimetype='image/jpeg')
+                
+            # ОПТИМИЗАЦИЯ: BILINEAR работает быстрее LANCZOS
+            img.thumbnail((1920, 1920), Image.BILINEAR) 
             if img.mode not in ("RGB", "L"):
                 img = img.convert("RGB")
-            img.save(cache_path, format='JPEG', quality=85)
+            img.save(cache_path, format='JPEG', quality=80)
             return send_file(cache_path, mimetype='image/jpeg')
         except Exception:
             return send_file(path)
@@ -828,7 +833,8 @@ async function render() {
   
   const name = images[currentIndex];
   
-  img.src = '/api/image?name=' + encodeURIComponent(name) + '&thumb=1&t=' + Date.now();
+  // ОПТИМИЗАЦИЯ: Убрали &t=Date.now(), чтобы браузер кэшировал картинки
+  img.src = '/api/image?name=' + encodeURIComponent(name) + '&thumb=1';
   
   img.style.display = 'block'; ph.style.display = 'none';
   
@@ -846,6 +852,7 @@ async function render() {
       const nextIndex = (currentIndex + 1) % images.length;
       const nextName = images[nextIndex];
       const preloadImg = new Image();
+      // Тоже убрали кэш-бастер для предзагрузки
       preloadImg.src = '/api/image?name=' + encodeURIComponent(nextName) + '&thumb=1';
   }
 }
