@@ -3,10 +3,10 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*' # Запускать сборку при пуше тега, начинающегося с 'v'
+      - 'v*'
 
 permissions:
-  contents: write # Разрешение на создание релизов
+  contents: write
 
 jobs:
   build:
@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14' # Укажите вашу версию Python
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
