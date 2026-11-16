@@ -31,7 +31,7 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.8.0"
+CURRENT_VERSION = "1.8.1"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 # =====================================================================
@@ -225,18 +225,29 @@ def check_for_updates(manual=False):
 
 def force_check_update():
     def do_check():
+        global ignored_version, pending_update_url
+        ignored_version = None 
+        pending_update_url = None
+        
         if status_label:
             tk_root.after(0, lambda: status_label.config(text="Checking...", fg="#ffffff"))
-        
-        global ignored_version
-        ignored_version = None 
         
         found = check_for_updates(manual=True)
         
         if not found and tk_root:
-            tk_root.after(0, lambda: messagebox.showinfo("Updates", "You are already using the latest version.", parent=tk_root))
-            if status_label:
-                tk_root.after(0, lambda: status_label.config(text="Application is running.", fg="#ffffff"))
+            def show_latest_msg():
+                if status_label:
+                    status_label.config(text="You are already using the latest version.", fg="#22c55e") # Зеленый цвет
+                
+                # Возвращаем исходный текст через 20 секунд
+                def revert_msg():
+                    if status_label and status_label.cget("text") == "You are already using the latest version.":
+                        status_label.config(text="Application is running.", fg="#ffffff")
+                tk_root.after(20000, revert_msg)
+            
+            tk_root.after(0, show_latest_msg)
+        elif not found and status_label:
+            tk_root.after(0, lambda: status_label.config(text="Application is running.", fg="#ffffff"))
     
     threading.Thread(target=do_check, daemon=True).start()
 
@@ -578,7 +589,7 @@ def main():
 
     tk_root = tk.Tk()
     tk_root.title('PhotoClassifier')
-    tk_root.geometry('800x420') # Уменьшили высоту для компактности
+    tk_root.geometry('800x420')
     tk_root.configure(bg='#18181b')
 
     try:
