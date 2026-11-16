@@ -24,8 +24,8 @@ from flask import Flask, request, jsonify, send_file
 # НАСТРОЙКИ ОБНОВЛЕНИЯ (ЗАМЕНИТЕ НА СВОИ)
 # =====================================================================
 CURRENT_VERSION = "1.0.0"          # Ваша текущая версия (без буквы 'v')
-GITHUB_USER = "ВАШ_НИК"            # Например: "ivan_petrov"
-GITHUB_REPO = "ВАШ_РЕПОЗИТОРИЙ"    # Например: "PhotoClassifier"
+GITHUB_USER = "mrfusionyt"            # Например: "ivan_petrov"
+GITHUB_REPO = "-PV"    # Например: "PhotoClassifier"
 # =====================================================================
 
 SUPPORTED = ('.jpg', '.jpeg', '.png', '.gif', '.bmp',
