@@ -31,7 +31,7 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.7.2"
+CURRENT_VERSION = "1.7.3"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 INSTALL_DIR = r"C:\!PV" 
@@ -347,7 +347,6 @@ def api_image():
     if thumb:
         try:
             img = Image.open(path)
-            # ОПТИМИЗАЦИЯ: Если фото уже маленькое, не сжимаем его, а отдаем оригинал
             if img.width <= 1920 and img.height <= 1920:
                 return send_file(path)
             
@@ -360,7 +359,6 @@ def api_image():
             if os.path.exists(cache_path):
                 return send_file(cache_path, mimetype='image/jpeg')
                 
-            # ОПТИМИЗАЦИЯ: BILINEAR работает быстрее LANCZOS
             img.thumbnail((1920, 1920), Image.BILINEAR) 
             if img.mode not in ("RGB", "L"):
                 img = img.convert("RGB")
@@ -613,7 +611,10 @@ HTML_PAGE = r'''<!DOCTYPE html>
   
   #main { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; padding: 6px; touch-action: none; min-height: 0; }
   #img-container { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-  #photo { max-width: 100%; max-height: 100%; object-fit: contain; display: none; user-select: none; -webkit-user-drag: none; transition: filter 0.1s linear, transform 0.1s ease-out; will-change: filter, transform; transform-origin: center center; }
+  
+  /* Убрана анимация transform для плавного перетаскивания */
+  #photo { max-width: 100%; max-height: 100%; object-fit: contain; display: none; user-select: none; -webkit-user-drag: none; transition: filter 0.1s linear; will-change: filter, transform; transform-origin: center center; }
+  
   #photo-placeholder { color: #666; font-size: 16px; text-align: center; padding: 30px; }
   
   .nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.35); color: #fff; border: none; width: 70px; height: 130px; font-size: 40px; cursor: pointer; opacity: 0.65; transition: opacity 0.15s, background 0.15s; user-select: none; touch-action: manipulation; display: flex; align-items: center; justify-content: center; z-index: 10; }
@@ -692,6 +693,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
   <header>
     <span class="title">PhotoClassifier</span>
     <span class="spacer"></span>
+    <button id="btn-restart" title="Reload Settings & Photos">🔄</button>
     <button id="btn-fullscreen" title="Toggle Fullscreen (F)">⛶</button>
     <button id="btn-undo" disabled title="Undo last move (Ctrl+Z)">↶ (0)</button>
     <button id="btn-settings" title="Settings">⚙</button>
@@ -756,7 +758,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
         </div>
       </div>
       <div class="actions">
-        <button onclick="restartServer()" style="margin-right:auto;" title="Reload settings and rescan source folder">🔄 Restart server</button>
         <button onclick="closeSettings()">Cancel</button>
         <button class="primary" onclick="saveSettings()">Save</button>
       </div>
@@ -771,8 +772,6 @@ let brightness = 1.0;
 
 let scale = 1.0;
 let translateX = 0, translateY = 0;
-let isDragging = false;
-let startX, startY;
 
 const $ = (id) => document.getElementById(id);
 
@@ -833,7 +832,6 @@ async function render() {
   
   const name = images[currentIndex];
   
-  // ОПТИМИЗАЦИЯ: Убрали &t=Date.now(), чтобы браузер кэшировал картинки
   img.src = '/api/image?name=' + encodeURIComponent(name) + '&thumb=1';
   
   img.style.display = 'block'; ph.style.display = 'none';
@@ -852,7 +850,6 @@ async function render() {
       const nextIndex = (currentIndex + 1) % images.length;
       const nextName = images[nextIndex];
       const preloadImg = new Image();
-      // Тоже убрали кэш-бастер для предзагрузки
       preloadImg.src = '/api/image?name=' + encodeURIComponent(nextName) + '&thumb=1';
   }
 }
@@ -877,8 +874,15 @@ function applyTransform() {
     const img = $('photo');
     if (img) {
         img.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+        if (scale > 1.0) {
+            $('img-container').style.cursor = 'grab';
+        } else {
+            $('img-container').style.cursor = 'default';
+        }
     }
 }
+
+// ---------------- Pan & Zoom Logic ----------------
 
 $('img-container').addEventListener('wheel', (e) => {
     if (images.length === 0) return;
@@ -896,37 +900,69 @@ $('img-container').addEventListener('wheel', (e) => {
     }
 }, { passive: false });
 
+// ПК: Перетаскивание мышью
+let isDragging = false;
+let dragStartX = 0, dragStartY = 0;
+
 $('img-container').addEventListener('mousedown', (e) => {
     if (scale > 1.0) {
+        e.preventDefault();
         isDragging = true;
-        startX = e.clientX - translateX;
-        startY = e.clientY - translateY;
-        $('photo').style.cursor = 'grabbing';
+        dragStartX = e.clientX - translateX;
+        dragStartY = e.clientY - translateY;
+        $('img-container').style.cursor = 'grabbing';
     }
 });
+
 window.addEventListener('mousemove', (e) => {
     if (isDragging) {
-        translateX = e.clientX - startX;
-        translateY = e.clientY - startY;
+        e.preventDefault();
+        translateX = e.clientX - dragStartX;
+        translateY = e.clientY - dragStartY;
         applyTransform();
     }
 });
+
 window.addEventListener('mouseup', () => {
-    isDragging = false;
-    $('photo').style.cursor = 'default';
+    if (isDragging) {
+        isDragging = false;
+        $('img-container').style.cursor = 'grab';
+    }
 });
 
+// Мобилки: Свайпы, Зум, Перетаскивание
+let touchMode = 'none'; // 'none', 'swipe', 'drag', 'pinch'
+let touchStartX = 0, touchStartY = 0;
+let dragStartTouchX = 0, dragStartTouchY = 0;
 let initialDistance = 0;
+
 $('img-container').addEventListener('touchstart', (e) => {
-    if (e.touches.length === 2) {
+    if (e.touches.length === 1) {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+        if (scale > 1.0) {
+            touchMode = 'drag';
+            dragStartTouchX = e.touches[0].clientX - translateX;
+            dragStartTouchY = e.touches[0].clientY - translateY;
+        } else {
+            touchMode = 'swipe';
+        }
+    } else if (e.touches.length === 2) {
+        touchMode = 'pinch';
         initialDistance = Math.hypot(
             e.touches[0].pageX - e.touches[1].pageX,
             e.touches[0].pageY - e.touches[1].pageY
         );
     }
-}, { passive: true });
+}, { passive: false });
+
 $('img-container').addEventListener('touchmove', (e) => {
-    if (e.touches.length === 2) {
+    if (touchMode === 'drag' && e.touches.length === 1) {
+        e.preventDefault();
+        translateX = e.touches[0].clientX - dragStartTouchX;
+        translateY = e.touches[0].clientY - dragStartTouchY;
+        applyTransform();
+    } else if (touchMode === 'pinch' && e.touches.length === 2) {
         e.preventDefault();
         const currentDistance = Math.hypot(
             e.touches[0].pageX - e.touches[1].pageX,
@@ -934,11 +970,28 @@ $('img-container').addEventListener('touchmove', (e) => {
         );
         if (initialDistance > 0) {
             scale = Math.max(1.0, Math.min(5.0, scale * (currentDistance / initialDistance)));
+            if (scale === 1.0) { translateX = 0; translateY = 0; }
             applyTransform();
             initialDistance = currentDistance;
         }
     }
 }, { passive: false });
+
+$('img-container').addEventListener('touchend', (e) => {
+    if (touchMode === 'swipe') {
+        const t = e.changedTouches[0];
+        const dx = t.clientX - touchStartX;
+        const dy = t.clientY - touchStartY;
+        if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) {
+            if (dx < 0) nextImage(); else prevImage();
+        }
+    }
+    if (e.touches.length === 0) {
+        touchMode = 'none';
+    }
+}, { passive: false });
+
+// ---------------- API Functions ----------------
 
 async function classify(category) {
   if (images.length === 0) return;
@@ -1047,22 +1100,7 @@ function toast(msg, isError) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
 }
 
-(function setupSwipe() {
-  const main = $('img-container'); let startX = 0, startY = 0, tracking = false;
-  main.addEventListener('touchstart', (e) => {
-    if (e.touches.length !== 1) { tracking = false; return; }
-    if (e.target.closest('button')) { tracking = false; return; }
-    startX = e.touches[0].clientX; startY = e.touches[0].clientY; tracking = true;
-  }, { passive: true });
-  main.addEventListener('touchend', (e) => {
-    if (!tracking) return; tracking = false;
-    if (scale > 1.0) return;
-    const t = e.changedTouches[0]; const dx = t.clientX - startX; const dy = t.clientY - startY;
-    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
-    if (dx < 0) nextImage(); else prevImage();
-  }, { passive: true });
-})();
-
+$('btn-restart').onclick = restartServer;
 $('btn-fullscreen').onclick = toggleFullscreen;
 $('btn-settings').onclick = openSettings; $('btn-quit').onclick = quitApp; 
 $('btn-undo').onclick = undoLast;
