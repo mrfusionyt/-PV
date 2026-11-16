@@ -26,7 +26,7 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.4.0"
+CURRENT_VERSION = "1.4.1"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 INSTALL_DIR = r"C:\!PV" 
@@ -52,8 +52,9 @@ moves_lock = threading.Lock()
 dialog_req = queue.Queue()
 dialog_res = queue.Queue()
 tk_root = None
+status_label = None
 quit_requested = threading.Event()
-ignored_version = None  # Запоминаем версию, которую пользователь отклонил
+ignored_version = None
 
 def resource_path(relative_path):
     try:
@@ -140,7 +141,6 @@ def check_for_updates():
         latest_version = data.get('tag_name', '').lstrip('v')
         release_url = data.get('html_url', '')
         
-        # Если есть новая версия и пользователь её еще не отклонял
         if latest_version and latest_version != CURRENT_VERSION and latest_version != ignored_version:
             download_url = None
             for asset in data.get('assets', []):
@@ -154,10 +154,8 @@ def check_for_updates():
         print(f"Update check error: {e}")
 
 def update_loop():
-    """Фоновая проверка обновлений раз в час."""
     while not quit_requested.is_set():
         check_for_updates()
-        # Ждем 1 час (3600 секунд), но проверяем флаг закрытия каждую секунду
         for _ in range(3600):
             if quit_requested.is_set(): break
             time.sleep(1)
@@ -179,8 +177,11 @@ def show_update_dialog(latest_version, release_url, download_url):
 
     ans = messagebox.askyesno("Update Available!", msg, parent=tk_root)
     if ans:
+        # Меняем текст в главном окне, чтобы показать, что идет скачивание
+        if status_label:
+            status_label.config(text="Downloading update...", fg="#ff3b5c")
+            
         threading.Thread(target=download_and_update, args=(download_url,), daemon=True).start()
-        messagebox.showinfo("Updating", "Downloading update in the background...\nThe app will restart automatically.", parent=tk_root)
     else:
         ignored_version = latest_version
 
@@ -191,21 +192,18 @@ def download_and_update(download_url):
         zip_path = os.path.join(os.environ.get('TEMP', '.'), zip_name)
         update_dir = os.path.join(os.environ.get('TEMP', '.'), "pc_update_temp")
         
-        # 1. Скачиваем архив
         r = requests.get(download_url, stream=True)
         r.raise_for_status()
         with open(zip_path, 'wb') as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
                 
-        # 2. Распаковываем
         if os.path.exists(update_dir):
             shutil.rmtree(update_dir)
         os.makedirs(update_dir)
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(update_dir)
 
-        # 3. Создаем скрытый BAT для замены файлов
         bat_path = os.path.join(os.environ.get('TEMP', '.'), "update_pc.bat")
         with open(bat_path, "w") as f:
             f.write(f"""@echo off
@@ -426,7 +424,7 @@ def create_dark_button(parent, text, command, is_primary=False):
     return btn
 
 def main():
-    global tk_root
+    global tk_root, status_label
 
     load_config()
     if len(sys.argv) > 1:
@@ -450,7 +448,9 @@ def main():
         tk_root.iconphoto(True, icon_img)
     except Exception: pass
 
-    tk.Label(tk_root, text='Application is running.', bg='#141418', fg='#ffffff', font=('Segoe UI', 12, 'bold')).pack(pady=(20, 10))
+    status_label = tk.Label(tk_root, text='Application is running.', bg='#141418', fg='#ffffff', font=('Segoe UI', 12, 'bold'))
+    status_label.pack(pady=(20, 10))
+    
     tk.Label(tk_root, text=f'Version {CURRENT_VERSION}', bg='#141418', fg='#666666', font=('Segoe UI', 9)).pack()
     tk.Label(tk_root, text='On this PC:', bg='#141418', fg='#888888', font=('Segoe UI', 9)).pack(pady=(10, 0))
     tk.Label(tk_root, text=local_url, bg='#141418', fg='#ff3b5c', font=('Consolas', 12, 'bold')).pack(pady=(2, 15))
@@ -472,10 +472,10 @@ def main():
         except Exception as e: print('Flask error:', e)
 
     threading.Thread(target=run_flask, daemon=True).start()
-    # Запускаем цикл проверки обновлений вместо одиночного вызова
     threading.Thread(target=update_loop, daemon=True).start()
 
-    tk_root.after(400, lambda: webbrowser.open(local_url))
+    # Автоматическое открытие браузера убрано!
+    
     tk_root.after(100, tk_pump)
     tk_root.mainloop()
 
