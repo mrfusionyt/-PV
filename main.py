@@ -2,7 +2,7 @@
 #   & 'C:\Program Files\Python314\python.exe' -m pip install --upgrade Flask Pillow requests
 #
 # Build to .exe:
-#   & 'C:\Program Files\Python314\python.exe' -m PyInstaller --onefile --windowed --noconfirm --name PhotoClassifier --icon=img/8080.png --add-data "img;img" main.py
+#   & 'C:\Program Files\Python314\python.exe' -m PyInstaller --noconfirm --windowed --name PhotoClassifier --icon=img/8080.png --add-data "img;img" main.py
 
 import os
 import sys
@@ -14,6 +14,7 @@ import threading
 import webbrowser
 import subprocess
 import tkinter as tk
+import zipfile
 from tkinter import filedialog, messagebox
 from pathlib import Path
 from collections import deque
@@ -24,7 +25,7 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.2.4"
+CURRENT_VERSION = "1.3.0"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 # =====================================================================
@@ -132,8 +133,9 @@ def check_for_updates():
         
         if latest_version and latest_version != CURRENT_VERSION:
             download_url = None
+            # Ищем ZIP архив в релизе
             for asset in data.get('assets', []):
-                if asset['name'].endswith('.exe'):
+                if asset['name'].endswith('.zip'):
                     download_url = asset['browser_download_url']
                     break
             
@@ -161,26 +163,40 @@ def download_and_update(download_url):
         exe_path = sys.executable
         exe_dir = os.path.dirname(exe_path)
         exe_name = os.path.basename(exe_path)
-        new_exe_name = "PhotoClassifier_new.exe"
-        new_exe_path = os.path.join(exe_dir, new_exe_name)
-
+        
+        zip_name = "update.zip"
+        zip_path = os.path.join(exe_dir, zip_name)
+        update_dir = os.path.join(exe_dir, "update_temp")
+        
+        # 1. Скачиваем ZIP
         r = requests.get(download_url, stream=True)
         r.raise_for_status()
-        with open(new_exe_path, 'wb') as f:
+        with open(zip_path, 'wb') as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
+                
+        # 2. Распаковываем
+        if os.path.exists(update_dir):
+            shutil.rmtree(update_dir)
+        os.makedirs(update_dir)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(update_dir)
 
+        # 3. Создаем BAT для замены файлов
         bat_path = os.path.join(exe_dir, "update.bat")
         with open(bat_path, "w") as f:
             f.write(f"""@echo off
 timeout /t 2 /nobreak > NUL
 taskkill /IM "{exe_name}" /F > NUL 2>&1
-move /Y "{new_exe_name}" "{exe_name}"
+xcopy /s /y /i /q "{update_dir}\\*" ".\\"
+rmdir /s /q "{update_dir}"
+del "{zip_name}"
 start "" "{exe_name}"
 del "%~f0"
 """)
 
-        subprocess.Popen([bat_path], shell=True)
+        # Запускаем без черного окна консоли и закрываем прогу
+        subprocess.Popen(f'"{bat_path}"', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         quit_requested.set()
 
     except Exception as e:
