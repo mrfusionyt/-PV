@@ -1,5 +1,5 @@
 # Dependencies:
-#   & 'C:\Program Files\Python314\python.exe' -m pip install --upgrade Flask Pillow requests send2trash
+#   & 'C:\Program Files\Python314\python.exe' -m pip install --upgrade Flask Pillow requests send2trash pystray
 #
 # Build to .exe:
 #   & 'C:\Program Files\Python314\python.exe' -m PyInstaller --noconfirm --windowed --name PhotoClassifier --icon=img/8080.png --add-data "img;img" main.py
@@ -23,14 +23,15 @@ from pathlib import Path
 from collections import deque
 import requests
 import send2trash
-from PIL import Image
+import pystray
+from PIL import Image, ImageTk
 
 from flask import Flask, request, jsonify, send_file
 
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.7.0"
+CURRENT_VERSION = "1.7.1"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 INSTALL_DIR = r"C:\!PV" 
@@ -61,6 +62,8 @@ update_btn = None
 pending_update_url = None
 quit_requested = threading.Event()
 ignored_version = None
+tray_icon = None
+local_url_global = ""
 
 def resource_path(relative_path):
     try:
@@ -131,6 +134,35 @@ def get_local_ips():
     except Exception: pass
     return ips
 
+# ----------------------- Tray Icon Logic -----------------------
+
+def show_window(icon=None, item=None):
+    tk_root.after(0, lambda: (tk_root.deiconify(), tk_root.lift(), tk_root.focus_force()))
+
+def hide_window(icon=None, item=None):
+    tk_root.withdraw()
+
+def tray_quit(icon, item):
+    icon.stop()
+    quit_requested.set()
+    tk_root.after(0, tk_root.destroy)
+
+def create_tray():
+    global tray_icon
+    try:
+        image = Image.open(resource_path('img/8080.png'))
+        
+        menu = pystray.Menu(
+            pystray.MenuItem('Show App', show_window, default=True),
+            pystray.MenuItem('Open in Browser', lambda: webbrowser.open(local_url_global)),
+            pystray.MenuItem('Exit', tray_quit)
+        )
+        
+        tray_icon = pystray.Icon("PhotoClassifier", image, "PhotoClassifier", menu)
+        threading.Thread(target=tray_icon.run, daemon=True).start()
+    except Exception as e:
+        print("Failed to create tray icon:", e)
+
 # ----------------------- Auto-Update Logic -----------------------
 
 def check_for_updates():
@@ -168,11 +200,15 @@ def update_loop():
 def show_update_indicator(latest_version, download_url):
     global pending_update_url
     pending_update_url = download_url
-    if update_btn:
+    if update_btn and not update_btn.winfo_ismapped():
         update_btn.config(text=f"⬇ Update to v{latest_version}", bg="#2d7d46")
-        update_btn.pack(pady=(5, 5), before=tk_root.winfo_children()[2])
+        update_btn.pack(pady=(5, 5))
         if status_label:
             status_label.config(text="Update Available!", fg="#ff3b5c")
+        
+        tk_root.update_idletasks()
+        req_h = tk_root.winfo_reqheight()
+        tk_root.geometry(f"420x{req_h}")
 
 def trigger_update():
     global pending_update_url
@@ -218,6 +254,8 @@ del "%~f0"
 
         subprocess.Popen(f'"{bat_path}"', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         quit_requested.set()
+        if tray_icon:
+            tray_icon.stop()
 
     except Exception as e:
         if tk_root:
@@ -297,8 +335,6 @@ def api_save_settings():
     with moves_lock: undo_count = len(moves)
     return jsonify({'ok': True, 'images': state['images'], 'undo_count': undo_count})
 
-# ----------------------- Caching & Info Routes -----------------------
-
 @app.route('/api/image')
 def api_image():
     name = request.args.get('name', '')
@@ -312,7 +348,6 @@ def api_image():
         cache_dir = os.path.join(state['source'], '.cache')
         os.makedirs(cache_dir, exist_ok=True)
         
-        # Хэшируем полный путь к файлу для уникального имени кэша
         h = hashlib.md5(path.encode('utf-8')).hexdigest()
         cache_path = os.path.join(cache_dir, h + ".jpg")
         
@@ -327,7 +362,7 @@ def api_image():
             img.save(cache_path, format='JPEG', quality=85)
             return send_file(cache_path, mimetype='image/jpeg')
         except Exception:
-            return send_file(path) # Если не удалось сжать, отдаем оригинал
+            return send_file(path)
             
     return send_file(path)
 
@@ -422,6 +457,7 @@ def api_delete():
 
 @app.route('/api/quit', methods=['POST'])
 def api_quit():
+    if tray_icon: tray_icon.stop()
     quit_requested.set()
     return jsonify({'ok': True})
 
@@ -466,7 +502,7 @@ def create_dark_button(parent, text, command, is_primary=False):
     return btn
 
 def main():
-    global tk_root, status_label, update_btn
+    global tk_root, status_label, update_btn, local_url_global
 
     load_config()
     if len(sys.argv) > 1:
@@ -477,11 +513,11 @@ def main():
     scan_source()
     port = find_free_port()
     local_url = f'http://127.0.0.1:{port}'
+    local_url_global = local_url
     lan_ips = get_local_ips()
 
     tk_root = tk.Tk()
     tk_root.title('PhotoClassifier')
-    tk_root.geometry('420x')
     tk_root.resizable(False, False)
     tk_root.configure(bg='#141418')
 
@@ -495,7 +531,10 @@ def main():
     
     tk.Label(tk_root, text=f'Version {CURRENT_VERSION}', bg='#141418', fg='#666666', font=('Segoe UI', 9)).pack(pady=(0, 5))
 
-    update_btn = create_dark_button(tk_root, '', trigger_update, is_primary=True)
+    update_frame = tk.Frame(tk_root, bg='#141418')
+    update_frame.pack()
+
+    update_btn = create_dark_button(update_frame, '', trigger_update, is_primary=True)
     update_btn.config(bg="#2d7d46", activebackground="#369b56")
     update_btn.bind('<Enter>', lambda e: update_btn.config(bg='#369b56'))
     update_btn.bind('<Leave>', lambda e: update_btn.config(bg='#2d7d46'))
@@ -511,9 +550,14 @@ def main():
     btn_frame.pack(pady=(5, 10))
 
     create_dark_button(btn_frame, 'Open in browser', lambda: webbrowser.open(local_url), is_primary=True).pack(side=tk.LEFT, padx=5)
-    create_dark_button(btn_frame, 'Exit', lambda: quit_requested.set()).pack(side=tk.LEFT, padx=5)
+    create_dark_button(btn_frame, 'Hide to Tray', hide_window).pack(side=tk.LEFT, padx=5)
+    create_dark_button(btn_frame, 'Exit', lambda: (tray_icon.stop(), quit_requested.set())).pack(side=tk.LEFT, padx=5)
 
-    tk_root.protocol('WM_DELETE_WINDOW', lambda: quit_requested.set())
+    tk_root.update_idletasks()
+    req_h = tk_root.winfo_reqheight()
+    tk_root.geometry(f"420x{req_h}")
+
+    tk_root.protocol('WM_DELETE_WINDOW', hide_window)
 
     def run_flask():
         try: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
@@ -521,9 +565,25 @@ def main():
 
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=update_loop, daemon=True).start()
+    
+    create_tray()
 
     tk_root.after(100, tk_pump)
-    tk_root.mainloop()
+    
+    # Обертка для красивого выхода по Ctrl+C
+    try:
+        tk_root.mainloop()
+    except KeyboardInterrupt:
+        print("\nShutting down gracefully...")
+        quit_requested.set()
+    finally:
+        if tray_icon:
+            try: tray_icon.stop()
+            except: pass
+        try:
+            tk_root.destroy()
+        except:
+            pass
 
 HTML_PAGE = r'''<!DOCTYPE html>
 <html lang="en">
@@ -768,15 +828,10 @@ async function render() {
   
   const name = images[currentIndex];
   
-  // Загружаем через эндпоинт с параметром thumb=1 (сжатие/кэш)
   img.src = '/api/image?name=' + encodeURIComponent(name) + '&thumb=1&t=' + Date.now();
   
   img.style.display = 'block'; ph.style.display = 'none';
-  
-  // Базовый текст
-  counter.textContent = (currentIndex + 1) + ' / ' + images.length + ' — ' + name;
-  counter.title = name;
-  
+  counter.textContent = (currentIndex + 1) + ' / ' + images.length + ' — ' + name; counter.title = name;
   btnNN.disabled = false; btnN.disabled = false; applyBrightness();
   
   const progressPercent = ((currentIndex + 1) / images.length) * 100;
@@ -784,7 +839,6 @@ async function render() {
 
   localStorage.setItem('lastPhotoIndex', currentIndex);
 
-  // ПРЕДЗАГРУЗКА следующего фото
   if (images.length > 1) {
       const nextIndex = (currentIndex + 1) % images.length;
       const nextName = images[nextIndex];
@@ -792,12 +846,10 @@ async function render() {
       preloadImg.src = '/api/image?name=' + encodeURIComponent(nextName) + '&thumb=1';
   }
 
-  // НОВОЕ: Асинхронно запрашиваем разрешение и вес файла
   try {
       const infoRes = await fetch('/api/info?name=' + encodeURIComponent(name));
       const infoData = await infoRes.json();
       if (infoData.ok) {
-          // Добавляем инфу в конец строки
           counter.textContent += ` [${infoData.res}, ${infoData.size}]`;
       }
   } catch(e) {}

@@ -2,3 +2,4 @@ Flask
 Pillow
 requests
 send2trash
+pystray
