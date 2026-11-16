@@ -31,7 +31,7 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.8.3"
+CURRENT_VERSION = "1.8.4"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 # =====================================================================
