@@ -16,18 +16,20 @@ import subprocess
 import tkinter as tk
 import zipfile
 import time
+import io
 from tkinter import filedialog, messagebox
 from pathlib import Path
 from collections import deque
 import requests
 import send2trash
+from PIL import Image
 
 from flask import Flask, request, jsonify, send_file
 
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.5.0"
+CURRENT_VERSION = "1.6.0"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 INSTALL_DIR = r"C:\!PV" 
@@ -298,9 +300,26 @@ def api_save_settings():
 @app.route('/api/image')
 def api_image():
     name = request.args.get('name', '')
+    thumb = request.args.get('thumb', '0') == '1'
+    
     if not is_safe_name(name) or not state['source']: return 'bad', 400
     path = os.path.join(state['source'], name)
     if not os.path.isfile(path): return 'not found', 404
+    
+    if thumb:
+        try:
+            # На лету уменьшаем фото для быстрой загрузки в браузере
+            img = Image.open(path)
+            img.thumbnail((1920, 1080), Image.LANCZOS)
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=85)
+            buf.seek(0)
+            return send_file(buf, mimetype='image/jpeg')
+        except Exception:
+            pass # Если не удалось сжать (например, битый файл), отдаем оригинал
+            
     return send_file(path)
 
 @app.route('/api/classify', methods=['POST'])
@@ -488,7 +507,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
   html, body { height: 100%; overflow: hidden; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
   body { background: #111; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
   
-  /* НОВОЕ: Полоса прогресса */
   #progress-container { position: absolute; top: 0; left: 0; width: 100%; height: 3px; background: #333; z-index: 10; }
   #progress-bar { height: 100%; background: #2d7d46; width: 0%; transition: width 0.3s ease; }
 
@@ -499,7 +517,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
   header button:hover { background: #3a3a3a; }
   header button:disabled { opacity: 0.35; cursor: not-allowed; }
   
-  /* НОВОЕ: Контейнер для зума */
   #main { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; padding: 6px; touch-action: none; min-height: 0; }
   #img-container { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
   #photo { max-width: 100%; max-height: 100%; object-fit: contain; display: none; user-select: none; -webkit-user-drag: none; transition: filter 0.1s linear, transform 0.1s ease-out; will-change: filter, transform; transform-origin: center center; }
@@ -516,6 +533,11 @@ HTML_PAGE = r'''<!DOCTYPE html>
   #toolbar button:hover { background: #3a3a3a; }
   #toolbar button:active { background: #4a4a4a; }
   #brightness-value { font-family: Consolas, monospace; color: #ccc; font-size: 16px; min-width: 60px; text-align: center; }
+  
+  /* НОВОЕ: Поле для прыжка к фото */
+  #jump-input { width: 60px; height: 38px; background: #111; color: #fff; border: 1px solid #555; border-radius: 6px; text-align: center; font-family: Consolas, monospace; font-size: 14px; margin-left: 10px; }
+  #jump-input:focus { outline: none; border-color: #ff3b5c; }
+
   #counter { margin-left: auto; font-size: 12px; color: #888; font-family: Consolas, monospace; padding-left: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45vw; }
   
   footer { display: flex; gap: 20px; padding: 16px 24px; justify-content: center; background: #1a1a1a; border-top: 1px solid #333; flex-wrap: wrap; z-index: 5; position: relative; }
@@ -551,7 +573,8 @@ HTML_PAGE = r'''<!DOCTYPE html>
     header button { padding: 5px 10px; font-size: 12px; }
     #toolbar { padding: 6px 10px; gap: 8px; }
     #toolbar button { width: 42px; height: 42px; font-size: 20px; }
-    #counter { max-width: 40vw; }
+    #counter { max-width: 30vw; }
+    #jump-input { width: 50px; height: 34px; font-size: 12px; }
     .nav { width: 56px; height: 110px; font-size: 34px; opacity: 0.75; }
     footer { flex-direction: column; gap: 10px; padding: 12px; }
     .action-btn { width: 100%; min-width: 0; padding: 28px 16px; font-size: 38px; border-radius: 12px; }
@@ -572,8 +595,9 @@ HTML_PAGE = r'''<!DOCTYPE html>
   <header>
     <span class="title">PhotoClassifier</span>
     <span class="spacer"></span>
+    <button id="btn-fullscreen" title="Toggle Fullscreen (F)">⛶</button>
     <button id="btn-back" title="Back (←)">◀</button>
-    <button id="btn-undo" disabled title="Undo last move">↶ (0)</button>
+    <button id="btn-undo" disabled title="Undo last move (Ctrl+Z)">↶ (0)</button>
     <button id="btn-settings" title="Settings">⚙</button>
     <button id="btn-quit" title="Exit">✕</button>
   </header>
@@ -590,6 +614,10 @@ HTML_PAGE = r'''<!DOCTYPE html>
     <span id="brightness-value">1.00</span>
     <button id="b-up" title="Brighter (↑)">☀+</button>
     <button id="b-reset" title="Reset brightness (R)">↺</button>
+    
+    <!-- НОВОЕ: Прыжок к фото -->
+    <input type="number" id="jump-input" min="1" placeholder="#">
+    
     <span id="counter"></span>
   </div>
   <footer>
@@ -660,7 +688,15 @@ async function loadState() {
   const r = await fetch('/api/state');
   const data = await r.json();
   images = data.images || [];
-  currentIndex = 0;
+  
+  // Восстанавливаем последнюю позицию
+  const savedIndex = localStorage.getItem('lastPhotoIndex');
+  if (savedIndex !== null && parseInt(savedIndex) < images.length) {
+    currentIndex = parseInt(savedIndex);
+  } else {
+    currentIndex = 0;
+  }
+
   settings = data.settings || settings;
   
   $('source-folder').value = settings.source || '';
@@ -706,7 +742,10 @@ function render() {
   if (currentIndex >= images.length) currentIndex = images.length - 1;
   
   const name = images[currentIndex];
-  img.src = '/api/image?name=' + encodeURIComponent(name) + '&t=' + Date.now();
+  
+  // Загружаем через новый эндпоинт с параметром thumb=1 (сжатие)
+  img.src = '/api/image?name=' + encodeURIComponent(name) + '&thumb=1&t=' + Date.now();
+  
   img.style.display = 'block'; ph.style.display = 'none';
   counter.textContent = (currentIndex + 1) + ' / ' + images.length + ' — ' + name; counter.title = name;
   btnNN.disabled = false; btnN.disabled = false; applyBrightness();
@@ -715,12 +754,15 @@ function render() {
   const progressPercent = ((currentIndex + 1) / images.length) * 100;
   progressBar.style.width = progressPercent + '%';
 
-  // ПРЕДЗАГРУЗКА следующего фото (Preloading)
+  // Сохраняем позицию в localStorage
+  localStorage.setItem('lastPhotoIndex', currentIndex);
+
+  // ПРЕДЗАГРУЗКА следующего фото
   if (images.length > 1) {
       const nextIndex = (currentIndex + 1) % images.length;
       const nextName = images[nextIndex];
       const preloadImg = new Image();
-      preloadImg.src = '/api/image?name=' + encodeURIComponent(nextName) + '&t=' + Date.now();
+      preloadImg.src = '/api/image?name=' + encodeURIComponent(nextName) + '&thumb=1';
   }
 }
 
@@ -740,6 +782,17 @@ function resetBrightness() { brightness = 1.0; applyBrightness(); }
 function nextImage() { if (images.length === 0) return; currentIndex = (currentIndex + 1) % images.length; brightness = 1.0; render(); }
 function prevImage() { if (images.length === 0) return; currentIndex = (currentIndex - 1 + images.length) % images.length; brightness = 1.0; render(); }
 
+function jumpToImage() {
+    const val = parseInt($('jump-input').value);
+    if (!isNaN(val) && val > 0 && val <= images.length) {
+        currentIndex = val - 1;
+        brightness = 1.0;
+        render();
+    }
+    $('jump-input').value = '';
+    $('jump-input').blur();
+}
+
 // Функция для зума
 function applyTransform() {
     const img = $('photo');
@@ -751,9 +804,8 @@ function applyTransform() {
 // Слушатель колесика мыши для зума и навигации
 $('img-container').addEventListener('wheel', (e) => {
     if (images.length === 0) return;
-    if (e.ctrlKey) return; // Игнорируем системный зум
+    if (e.ctrlKey) return;
 
-    // Если фото уже увеличено, крутим колесико для зума
     if (scale > 1.0) {
         e.preventDefault();
         const delta = e.deltaY > 0 ? -0.2 : 0.2;
@@ -761,13 +813,12 @@ $('img-container').addEventListener('wheel', (e) => {
         if (scale === 1.0) { translateX = 0; translateY = 0; }
         applyTransform();
     } else {
-        // Если фото не увеличено, крутим колесико для перелистывания
         if (e.deltaY > 0) nextImage();
         else prevImage();
     }
 }, { passive: false });
 
-// Перетаскивание (Pan) при увеличении
+// Перетаскивание (Pan)
 $('img-container').addEventListener('mousedown', (e) => {
     if (scale > 1.0) {
         isDragging = true;
@@ -788,7 +839,7 @@ window.addEventListener('mouseup', () => {
     $('photo').style.cursor = 'default';
 });
 
-// Поддержка щипка (Pinch to zoom) для телефонов
+// Pinch to zoom
 let initialDistance = 0;
 $('img-container').addEventListener('touchstart', (e) => {
     if (e.touches.length === 2) {
@@ -898,6 +949,16 @@ async function restartServer() {
 function openSettings() { $('settings-modal').classList.add('open'); }
 function closeSettings() { $('settings-modal').classList.remove('open'); }
 
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(err => {
+      toast(`Error attempting to enable fullscreen: ${err.message}`, true);
+    });
+  } else {
+    document.exitFullscreen();
+  }
+}
+
 async function quitApp() {
   if (!confirm('Close application?')) return;
   try { await fetch('/api/quit', { method: 'POST' }); } catch (e) {}
@@ -926,12 +987,15 @@ function toast(msg, isError) {
   }, { passive: true });
 })();
 
+$('btn-fullscreen').onclick = toggleFullscreen;
 $('btn-settings').onclick = openSettings; $('btn-quit').onclick = quitApp; $('btn-back').onclick = prevImage; $('btn-undo').onclick = undoLast;
 $('prev').onclick = prevImage; $('next').onclick = nextImage; $('b-up').onclick = () => changeBrightness(+0.1); $('b-down').onclick = () => changeBrightness(-0.1);
 $('b-reset').onclick = resetBrightness; $('btn-not-nude').onclick = () => classify('not_nude'); $('btn-nude').onclick = () => classify('nude');
+$('jump-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') jumpToImage(); });
 
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.ctrlKey && e.key === 'z') { undoLast(); e.preventDefault(); return; }
   if (e.key === 'ArrowRight') { nextImage(); e.preventDefault(); }
   else if (e.key === 'ArrowLeft') { prevImage(); e.preventDefault(); }
   else if (e.key === 'ArrowUp') { changeBrightness(+0.1); e.preventDefault(); }
@@ -940,6 +1004,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === '1') { classify('not_nude'); }
   else if (e.key === '2') { classify('nude'); }
   else if (e.key === 'r' || e.key === 'R') { resetBrightness(); }
+  else if (e.key === 'f' || e.key === 'F') { toggleFullscreen(); }
   else if (e.key === 'Escape') { closeSettings(); }
 });
 
