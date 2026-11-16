@@ -31,10 +31,9 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.7.4"
+CURRENT_VERSION = "1.8.0"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
-INSTALL_DIR = r"C:\!PV" 
 # =====================================================================
 
 SUPPORTED = ('.jpg', '.jpeg', '.png', '.gif', '.bmp',
@@ -179,6 +178,8 @@ def create_tray():
 def check_for_updates(manual=False):
     global ignored_version
     if GITHUB_USER == "YOUR_NICKNAME" or GITHUB_REPO == "YOUR_REPO":
+        if manual and tk_root:
+            tk_root.after(0, lambda: messagebox.showinfo("Updates", "Auto-update is not configured.", parent=tk_root))
         return False
 
     try:
@@ -196,28 +197,37 @@ def check_for_updates(manual=False):
                     download_url = asset['browser_download_url']
                     break
             
-            if tk_root and download_url:
+            if not download_url:
+                if manual and tk_root:
+                    tk_root.after(0, lambda: messagebox.showerror("Update Error", f"Version {latest_version} found, but no .zip file attached to the release on GitHub.\n\nCheck if GitHub Actions finished successfully.", parent=tk_root))
+                return False
+                
+            if tk_root:
                 tk_root.after(0, lambda: show_update_indicator(latest_version, download_url))
             return True
-        return False
+        else:
+            if manual and tk_root:
+                tk_root.after(0, lambda: messagebox.showinfo("Updates", "You are already using the latest version.", parent=tk_root))
+            return False
     except Exception as e:
+        if manual and tk_root:
+            tk_root.after(0, lambda: messagebox.showerror("Update Error", f"Failed to check updates:\n{e}", parent=tk_root))
         print(f"Update check error: {e}")
         return False
 
 def force_check_update():
     def do_check():
+        global ignored_version, pending_update_url
+        ignored_version = None 
+        pending_update_url = None
+        
         if status_label:
             tk_root.after(0, lambda: status_label.config(text="Checking...", fg="#ffffff"))
         
-        global ignored_version
-        ignored_version = None 
+        check_for_updates(manual=True)
         
-        found = check_for_updates(manual=True)
-        
-        if not found and tk_root:
-            tk_root.after(0, lambda: messagebox.showinfo("Updates", "You are already using the latest version.", parent=tk_root))
-            if status_label:
-                tk_root.after(0, lambda: status_label.config(text="Application is running.", fg="#ffffff"))
+        if status_label and not pending_update_url:
+            tk_root.after(0, lambda: status_label.config(text="Application is running.", fg="#ffffff"))
     
     threading.Thread(target=do_check, daemon=True).start()
 
@@ -239,7 +249,7 @@ def show_update_indicator(latest_version, download_url):
         
         tk_root.update_idletasks()
         req_h = tk_root.winfo_reqheight()
-        tk_root.geometry(f"420x{req_h}")
+        tk_root.geometry(f"460x{req_h}")
 
 def trigger_update():
     global pending_update_url
@@ -253,8 +263,15 @@ def trigger_update():
     threading.Thread(target=download_and_update, args=(pending_update_url,), daemon=True).start()
 
 def download_and_update(download_url):
+    if not getattr(sys, 'frozen', False):
+        tk_root.after(0, lambda: messagebox.showinfo("Info", "Auto-update only works in the compiled .exe version.", parent=tk_root))
+        return
+        
     try:
-        exe_name = "PhotoClassifier.exe"
+        exe_path = sys.executable
+        exe_dir = os.path.dirname(exe_path)
+        exe_name = os.path.basename(exe_path)
+        
         zip_name = "update.zip"
         zip_path = os.path.join(os.environ.get('TEMP', '.'), zip_name)
         update_dir = os.path.join(os.environ.get('TEMP', '.'), "pc_update_temp")
@@ -274,12 +291,12 @@ def download_and_update(download_url):
         bat_path = os.path.join(os.environ.get('TEMP', '.'), "update_pc.bat")
         with open(bat_path, "w") as f:
             f.write(f"""@echo off
-timeout /t 2 /nobreak > NUL
+timeout /t 3 /nobreak > NUL
 taskkill /IM "{exe_name}" /F > NUL 2>&1
-xcopy /s /y /i /q "{update_dir}\\*" "{INSTALL_DIR}\\"
+robocopy "{update_dir}" "{exe_dir}" /E /IS /IT /NFL /NDL /NJH /NJS /NC /NS /NP > NUL
 rmdir /s /q "{update_dir}"
 del "{zip_path}"
-start "" "{INSTALL_DIR}\\{exe_name}"
+start "" "{exe_dir}\\{exe_name}"
 del "%~f0"
 """)
 
@@ -640,181 +657,398 @@ HTML_PAGE = r'''<!DOCTYPE html>
 <title>PhotoClassifier</title>
 <link rel="icon" type="image/png" href="/favicon.ico">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; overflow: hidden; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
-  body { background: #111; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
-  
-  #progress-container { position: absolute; top: 0; left: 0; width: 100%; height: 3px; background: #333; z-index: 10; }
-  #progress-bar { height: 100%; background: #2d7d46; width: 0%; transition: width 0.3s ease; }
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-  header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1a1a1a; border-bottom: 1px solid #333; flex-wrap: wrap; position: relative; z-index: 5; }
-  header .title { font-weight: 600; font-size: 14px; }
-  header .spacer { flex: 1; }
-  header button { background: #2a2a2a; color: #eee; border: 1px solid #444; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; touch-action: manipulation; white-space: nowrap; }
-  header button:hover { background: #3a3a3a; }
-  header button:disabled { opacity: 0.35; cursor: not-allowed; }
+  :root {
+    --bg-app: #18181b;
+    --bg-sidebar: #141417;
+    --bg-surface: #27272a;
+    --bg-surface-hover: #3f3f46;
+    --text-main: #f4f4f5;
+    --text-muted: #a1a1aa;
+    --accent: #ef4444;
+    --accent-hover: #dc2626;
+    --border: #27272a;
+    --green: #22c55e;
+    --green-hover: #16a34a;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; font-family: 'Inter', -apple-system, sans-serif; background: var(--bg-app); color: var(--text-main); }
   
-  #main { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; padding: 6px; touch-action: none; min-height: 0; }
-  #img-container { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-  
-  #photo { max-width: 100%; max-height: 100%; object-fit: contain; display: none; user-select: none; -webkit-user-drag: none; transition: filter 0.1s linear; will-change: filter, transform; transform-origin: center center; }
-  
-  #photo-placeholder { color: #666; font-size: 16px; text-align: center; padding: 30px; }
-  
-  .nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.35); color: #fff; border: none; width: 70px; height: 130px; font-size: 40px; cursor: pointer; opacity: 0.65; transition: opacity 0.15s, background 0.15s; user-select: none; touch-action: manipulation; display: flex; align-items: center; justify-content: center; z-index: 10; }
-  .nav:hover { opacity: 1; background: rgba(0,0,0,0.6); }
-  .nav:active { background: rgba(0,0,0,0.8); }
-  #prev { left: 0; border-radius: 0 10px 10px 0; }
-  #next { right: 0; border-radius: 10px 0 0 10px; }
-  
-  #toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #1a1a1a; border-top: 1px solid #333; justify-content: center; flex-wrap: wrap; z-index: 5; position: relative; }
-  #toolbar button { background: #2a2a2a; color: #eee; border: 1px solid #444; width: 48px; height: 48px; border-radius: 8px; cursor: pointer; font-size: 22px; font-weight: 600; touch-action: manipulation; display: flex; align-items: center; justify-content: center; }
-  #toolbar button:hover { background: #3a3a3a; }
-  #toolbar button:active { background: #4a4a4a; }
-  #brightness-value { font-family: Consolas, monospace; color: #ccc; font-size: 16px; min-width: 60px; text-align: center; }
-  
-  #counter { 
-    margin-left: auto; 
-    font-size: 18px; 
-    color: #ddd; 
-    font-family: Consolas, monospace; 
-    padding-left: 12px; 
-    white-space: nowrap; 
+  .app-container { display: flex; height: 100vh; width: 100vw; }
+
+  /* --- SIDEBAR --- */
+  .sidebar {
+    width: 260px;
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 20px 0;
+    flex-shrink: 0;
+  }
+  .profile-card {
+    margin: 0 15px 30px 15px;
+    padding: 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+  }
+  .profile-card:hover { background: var(--bg-surface-hover); }
+  .avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: bold; color: white;
+  }
+  .profile-info { font-size: 13px; }
+  .profile-info b { display: block; font-size: 15px; color: var(--text-main); }
+  .profile-info span { color: var(--text-muted); }
+
+  .nav-section { margin-bottom: 20px; }
+  .nav-section h3 {
+    font-size: 12px; text-transform: uppercase; color: var(--text-muted);
+    margin: 0 25px 10px 25px; font-weight: 600; letter-spacing: 0.5px;
+  }
+  .nav-list { list-style: none; }
+  .nav-list li {
+    padding: 10px 25px;
+    font-size: 14px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .nav-list li:hover { color: var(--text-main); background: rgba(255,255,255,0.03); }
+  .nav-list li.active { background: var(--accent); color: white; font-weight: 500; }
+  .nav-list li.active:hover { background: var(--accent-hover); }
+  .nav-list li.danger { color: var(--accent); }
+  .nav-list li.danger:hover { color: white; background: var(--accent); }
+
+  /* --- MAIN CONTENT --- */
+  .main-content {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  /* --- TOP NAV --- */
+  .top-nav {
+    height: 60px;
+    background: var(--bg-sidebar);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    flex-shrink: 0;
+  }
+  .nav-tabs { display: flex; gap: 24px; height: 100%; }
+  .nav-tab {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    position: relative;
+  }
+  .nav-tab.active { color: var(--text-main); }
+  .nav-tab.active::after {
+    content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: var(--accent);
   }
   
-  footer { display: flex; gap: 20px; padding: 16px 24px; justify-content: center; background: #1a1a1a; border-top: 1px solid #333; flex-wrap: wrap; z-index: 5; position: relative; }
-  .action-btn { padding: 42px 96px; font-size: 48px; font-weight: 700; border: none; border-radius: 14px; cursor: pointer; min-width: 280px; letter-spacing: 1px; transition: transform 0.1s, filter 0.15s; touch-action: manipulation; box-shadow: 0 4px 12px rgba(0,0,0,0.4); word-break: break-word; }
-  .action-btn:active { transform: scale(0.97); }
-  .action-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-  #btn-not-nude { background: #a83a3a; color: #fff; }
-  #btn-not-nude:hover:not(:disabled) { filter: brightness(1.15); }
-  #btn-nude { background: #2d7d46; color: #fff; }
-  #btn-nude:hover:not(:disabled) { filter: brightness(1.15); }
+  .top-actions { display: flex; align-items: center; gap: 12px; }
+  .top-actions span { font-family: monospace; font-size: 15px; color: var(--text-muted); }
   
-  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
+  .btn {
+    background: var(--bg-surface);
+    color: var(--text-main);
+    border: 1px solid var(--border);
+    padding: 8px 16px; border-radius: 6px;
+    font-size: 13px; font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .btn:hover { background: var(--bg-surface-hover); }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: white; }
+  .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn-icon { padding: 8px 10px; font-size: 16px; }
+
+  /* --- WORKSPACE --- */
+  .workspace {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 16px 24px;
+    min-height: 0;
+  }
+
+  .viewer-panel {
+    flex-grow: 1;
+    background: #000;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+
+  #photo {
+    max-width: 100%; max-height: 100%; object-fit: contain;
+    display: none; user-select: none; -webkit-user-drag: none;
+    transition: filter 0.1s linear; will-change: filter, transform;
+    transform-origin: center center;
+  }
+  #photo-placeholder { color: var(--text-muted); font-size: 16px; text-align: center; }
+
+  .nav {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    background: rgba(0,0,0,0.5); color: white; border: 1px solid rgba(255,255,255,0.1);
+    width: 60px; height: 120px; font-size: 36px; border-radius: 8px;
+    cursor: pointer; opacity: 0.7; transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center; z-index: 10;
+  }
+  .nav:hover { opacity: 1; background: rgba(0,0,0,0.8); }
+  #prev { left: 16px; }
+  #next { right: 16px; }
+
+  .toolbar {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--bg-sidebar); border: 1px solid var(--border);
+    padding: 12px 16px; border-radius: 8px;
+  }
+  .toolbar button {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    color: var(--text-main); width: 40px; height: 40px; border-radius: 6px;
+    font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .toolbar button:hover { background: var(--bg-surface-hover); }
+  #brightness-value { font-family: monospace; font-size: 15px; color: var(--text-muted); min-width: 50px; text-align: center; }
+
+  /* --- BOTTOM ACTION BUTTONS --- */
+  .action-bar {
+    display: flex; gap: 16px; margin-top: 16px;
+  }
+  .action-btn {
+    flex: 1;
+    padding: 24px;
+    font-size: 32px; font-weight: 700; letter-spacing: 1px;
+    border: none; border-radius: 8px;
+    cursor: pointer; color: white;
+    transition: transform 0.1s, filter 0.15s;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  .action-btn:active { transform: scale(0.98); }
+  .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  #btn-not-nude { background: var(--accent); }
+  #btn-not-nude:hover:not(:disabled) { background: var(--accent-hover); }
+  #btn-nude { background: var(--green); }
+  #btn-nude:hover:not(:disabled) { background: var(--green-hover); }
+
+  /* --- MODAL (Settings) --- */
+  .modal-bg {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px);
+    display: none; align-items: center; justify-content: center; z-index: 100; padding: 16px;
+  }
   .modal-bg.open { display: flex; }
-  .modal { background: #1e1e1e; border: 1px solid #444; border-radius: 12px; padding: 22px; width: 640px; max-width: 100%; max-height: 90vh; overflow-y: auto; }
-  .modal h2 { margin-bottom: 16px; font-size: 18px; }
-  .modal .field { margin-bottom: 12px; }
-  .modal label { display: block; margin-bottom: 6px; font-size: 13px; color: #aaa; }
-  .modal .row { display: flex; gap: 8px; }
-  .modal input { flex: 1; min-width: 0; padding: 8px 10px; background: #111; border: 1px solid #444; border-radius: 6px; color: #eee; font-size: 13px; font-family: Consolas, monospace; }
-  .modal button { padding: 8px 14px; background: #2a2a2a; color: #eee; border: 1px solid #444; border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap; touch-action: manipulation; }
-  .modal button:hover { background: #3a3a3a; }
-  .modal .actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 18px; }
-  .modal .primary { background: #2d7d46; border-color: #2d7d46; color: #fff; }
-  .modal .primary:hover { background: #369b56; }
-  
-  #toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); background: rgba(40,40,40,0.96); border: 1px solid #555; color: #eee; padding: 10px 20px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity 0.2s; pointer-events: none; z-index: 200; max-width: 80vw; text-align: center; }
-  #toast.show { opacity: 1; }
-  #toast.error { border-color: #a83a3a; }
-  
-  @media (max-width: 900px) {
-    header { padding: 6px 8px; gap: 6px; }
-    header .title { font-size: 13px; }
-    header button { padding: 5px 10px; font-size: 12px; }
-    #toolbar { padding: 6px 10px; gap: 8px; }
-    #toolbar button { width: 42px; height: 42px; font-size: 20px; }
-    #counter { font-size: 16px; }
-    .nav { width: 56px; height: 110px; font-size: 34px; opacity: 0.75; }
-    footer { flex-direction: column; gap: 10px; padding: 12px; }
-    .action-btn { width: 100%; min-width: 0; padding: 28px 16px; font-size: 38px; border-radius: 12px; }
-    .modal .actions { flex-wrap: wrap; }
-    .modal .actions button { flex: 1 1 auto; }
-    .modal .actions button:first-child { flex-basis: 100%; margin-right: 0 !important; }
+  .modal {
+    background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px; width: 800px; max-width: 100%; max-height: 90vh; overflow-y: auto;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.5);
   }
-  @media (max-width: 420px) {
-    .action-btn { font-size: 32px; padding: 24px 12px; }
-    .nav { width: 46px; height: 90px; font-size: 28px; }
-    #toolbar button { width: 38px; height: 38px; font-size: 18px; }
-    #counter { font-size: 14px; }
+  .modal h2 { font-size: 20px; font-weight: 600; margin-bottom: 20px; }
+  
+  .settings-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+  .settings-table th {
+    text-align: left; padding: 12px; font-size: 12px; color: var(--text-muted);
+    text-transform: uppercase; border-bottom: 1px solid var(--border); font-weight: 600;
+  }
+  .settings-table td {
+    padding: 12px; border-bottom: 1px solid var(--border); font-size: 14px;
+  }
+  .settings-table input {
+    width: 100%; background: var(--bg-surface); border: 1px solid var(--border);
+    padding: 8px 12px; border-radius: 6px; color: var(--text-main); font-family: monospace;
+  }
+  .settings-table input:focus { outline: none; border-color: var(--accent); }
+  .settings-table button {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    color: var(--text-main); padding: 8px 12px; border-radius: 6px; cursor: pointer;
+  }
+  .settings-table button:hover { background: var(--bg-surface-hover); }
+
+  .modal-actions { display: flex; justify-content: flex-end; gap: 12px; }
+
+  /* --- TOAST --- */
+  #toast { position: fixed; top: 80px; left: 50%; transform: translateX(-50%); background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-main); padding: 12px 24px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity 0.2s; pointer-events: none; z-index: 200; text-align: center; box-shadow: 0 10px 20px rgba(0,0,0,0.5); }
+  #toast.show { opacity: 1; }
+  #toast.error { border-color: var(--accent); color: var(--accent); }
+
+  @media (max-width: 768px) {
+    .app-container { flex-direction: column; }
+    .sidebar { width: 100%; height: auto; padding: 10px; flex-direction: row; align-items: center; justify-content: space-between; border-right: none; border-bottom: 1px solid var(--border); }
+    .profile-card { margin: 0; padding: 8px; display: none; }
+    .nav-section { margin: 0; }
+    .nav-section h3 { display: none; }
+    .nav-list { display: flex; gap: 8px; }
+    .nav-list li { padding: 8px 12px; border-radius: 6px; }
+    .nav-list li.active { background: var(--accent); }
+    
+    .top-nav { padding: 0 12px; height: 50px; }
+    .nav-tabs { display: none; }
+    .top-actions span { display: none; }
+    
+    .workspace { padding: 8px; }
+    .nav { width: 44px; height: 80px; font-size: 28px; }
+    #prev { left: 8px; } #next { right: 8px; }
+    
+    .action-bar { flex-direction: column; gap: 8px; }
+    .action-btn { padding: 16px; font-size: 24px; }
   }
 </style>
 </head>
 <body>
-  <div id="progress-container"><div id="progress-bar"></div></div>
-  
-  <header>
-    <span class="title">PhotoClassifier</span>
-    <span class="spacer"></span>
-    <button id="btn-fullscreen" title="Toggle Fullscreen (F)">⛶</button>
-    <button id="btn-undo" disabled title="Undo last move (Ctrl+Z)">↶ (0)</button>
-    <button id="btn-settings" title="Settings">⚙</button>
-    <button id="btn-quit" title="Exit">✕</button>
-  </header>
-  <div id="main">
-    <button id="prev" class="nav" title="Back (←)">‹</button>
-    <button id="next" class="nav" title="Next (→)">›</button>
-    <div id="img-container">
-      <img id="photo" alt="" draggable="false">
-      <div id="photo-placeholder">Click ⚙ to select a photo folder</div>
-    </div>
-  </div>
-  <div id="toolbar">
-    <button id="b-down" title="Darker (↓)">☀−</button>
-    <span id="brightness-value">1.00</span>
-    <button id="b-up" title="Brighter (↑)">☀+</button>
-    <button id="b-reset" title="Reset brightness (R)">↺</button>
-    
-    <span id="counter"></span>
-  </div>
-  <footer>
-    <button class="action-btn" id="btn-not-nude" disabled>Not Nude</button>
-    <button class="action-btn" id="btn-nude" disabled>Nude</button>
-  </footer>
-  <div class="modal-bg" id="settings-modal">
-    <div class="modal">
-      <h2>Folder Settings</h2>
-      
-      <div class="field">
-        <label>Button 1 Name (Red)</label>
-        <div class="row">
-          <input type="text" id="label-not-nude" placeholder="Not Nude">
-        </div>
-      </div>
-      <div class="field">
-        <label>Button 2 Name (Green)</label>
-        <div class="row">
-          <input type="text" id="label-nude" placeholder="Nude">
+  <div id="progress-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 3px; background: transparent; z-index: 1000;"><div id="progress-bar" style="height: 100%; background: var(--accent); width: 0%; transition: width 0.3s ease;"></div></div>
+
+  <div class="app-container">
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="profile-card">
+        <div class="avatar">📷</div>
+        <div class="profile-info">
+          <span>Profile</span><br>
+          <b>PhotoClassifier</b>
         </div>
       </div>
 
-      <div class="field">
-        <label>Photo folder (source)</label>
-        <div class="row">
-          <input type="text" id="source-folder" placeholder="Type path or Browse...">
-          <button onclick="pickFolder('source')">Browse...</button>
+      <div class="nav-section">
+        <h3>Settings</h3>
+        <ul class="nav-list">
+          <li class="active" onclick="openSettings()">📁 Libraries</li>
+        </ul>
+      </div>
+
+      <div class="nav-section">
+        <h3>Tools</h3>
+        <ul class="nav-list">
+          <li onclick="undoLast()">↶ Undo Action</li>
+          <li onclick="toggleFullscreen()">⛶ Fullscreen</li>
+          <li onclick="quitApp()" class="danger">✕ Close Application</li>
+        </ul>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+      <header class="top-nav">
+        <div class="nav-tabs">
+          <div class="nav-tab active">Photos</div>
+        </div>
+        <div class="top-actions">
+          <span id="counter">0 / 0</span>
+          <button class="btn" id="btn-undo" disabled>↶ Undo</button>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <div class="viewer-panel" id="img-container">
+          <button id="prev" class="nav" title="Previous">‹</button>
+          <button id="next" class="nav" title="Next">›</button>
+          <img id="photo" alt="" draggable="false">
+          <div id="photo-placeholder">Click "Libraries" in the sidebar to select a folder</div>
+        </div>
+
+        <div class="toolbar">
+          <button id="b-down" title="Darker">☀−</button>
+          <span id="brightness-value">1.00</span>
+          <button id="b-up" title="Brighter">☀+</button>
+          <button id="b-reset" title="Reset">↺</button>
+        </div>
+
+        <div class="action-bar">
+          <button class="action-btn" id="btn-not-nude" disabled>Not Nude</button>
+          <button class="action-btn" id="btn-nude" disabled>Nude</button>
         </div>
       </div>
-      <div class="field">
-        <label>Save Button 1 photos to</label>
-        <div class="row">
-          <input type="text" id="not-nude-folder" placeholder="Type path or Browse...">
-          <button onclick="pickFolder('not_nude')">Browse...</button>
+    </main>
+  </div>
+
+  <!-- SETTINGS MODAL -->
+  <div class="modal-bg" id="settings-modal">
+    <div class="modal">
+      <h2>Folder Libraries</h2>
+      
+      <table class="settings-table">
+        <thead>
+          <tr>
+            <th style="width: 50px;">#</th>
+            <th>Role</th>
+            <th>Path</th>
+            <th style="width: 100px;">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>Source</td>
+            <td><input type="text" id="source-folder" placeholder="Select source folder..."></td>
+            <td><button onclick="pickFolder('source')">Browse</button></td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td id="label-not-nude-td">Not Nude</td>
+            <td><input type="text" id="not-nude-folder" placeholder="Select target folder..."></td>
+            <td><button onclick="pickFolder('not_nude')">Browse</button></td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td id="label-nude-td">Nude</td>
+            <td><input type="text" id="nude-folder" placeholder="Select target folder..."></td>
+            <td><button onclick="pickFolder('nude')">Browse</button></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style="display: flex; gap: 16px; margin-bottom: 20px;">
+        <div style="flex: 1;">
+          <label style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px; display: block;">Red Button Name</label>
+          <input type="text" id="label-not-nude" style="width: 100%; background: var(--bg-surface); border: 1px solid var(--border); padding: 8px 12px; border-radius: 6px; color: white;">
+        </div>
+        <div style="flex: 1;">
+          <label style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px; display: block;">Green Button Name</label>
+          <input type="text" id="label-nude" style="width: 100%; background: var(--bg-surface); border: 1px solid var(--border); padding: 8px 12px; border-radius: 6px; color: white;">
         </div>
       </div>
-      <div class="field">
-        <label>Save Button 2 photos to</label>
-        <div class="row">
-          <input type="text" id="nude-folder" placeholder="Type path or Browse...">
-          <button onclick="pickFolder('nude')">Browse...</button>
-        </div>
-      </div>
-      <div class="actions">
-        <button onclick="closeSettings()">Cancel</button>
-        <button class="primary" onclick="saveSettings()">Save</button>
+
+      <div class="modal-actions">
+        <button class="btn" onclick="closeSettings()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveSettings()">Save Changes</button>
       </div>
     </div>
   </div>
+
   <div id="toast"></div>
+
 <script>
 let images = [];
 let currentIndex = 0;
 let settings = { source: '', not_nude: '', nude: '', label_not_nude: 'Not Nude', label_nude: 'Nude' };
 let brightness = 1.0;
-
-let scale = 1.0;
-let translateX = 0, translateY = 0;
+let scale = 1.0, translateX = 0, translateY = 0;
 
 const $ = (id) => document.getElementById(id);
 
@@ -847,13 +1081,14 @@ async function loadState() {
 function updateUI() {
   $('btn-not-nude').textContent = settings.label_not_nude || 'Not Nude';
   $('btn-nude').textContent = settings.label_nude || 'Nude';
+  $('label-not-nude-td').textContent = settings.label_not_nude || 'Not Nude';
+  $('label-nude-td').textContent = settings.label_nude || 'Nude';
 }
 
 function updateUndoButton(count) {
   const btn = $('btn-undo');
-  btn.textContent = '↶ (' + count + ')';
+  btn.textContent = '↶ Undo (' + count + ')';
   btn.disabled = count === 0;
-  btn.title = count > 0 ? 'Undo last move (' + count + ' available)' : 'Nothing to undo';
 }
 
 async function render() {
@@ -865,7 +1100,7 @@ async function render() {
 
   if (images.length === 0) {
     img.style.display = 'none'; img.removeAttribute('src'); ph.style.display = 'block';
-    ph.textContent = settings.source ? 'No images in the selected folder (or all processed)' : 'Click ⚙ to select a photo folder';
+    ph.textContent = settings.source ? 'No images in the selected folder (or all processed)' : 'Click "Libraries" in the sidebar to select a folder';
     counter.textContent = ''; btnNN.disabled = true; btnN.disabled = true; applyBrightness(); 
     progressBar.style.width = '0%';
     return;
@@ -917,16 +1152,12 @@ function applyTransform() {
     const img = $('photo');
     if (img) {
         img.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
-        if (scale > 1.0) {
-            $('img-container').style.cursor = 'grab';
-        } else {
-            $('img-container').style.cursor = 'default';
-        }
+        if (scale > 1.0) $('img-container').style.cursor = 'grab';
+        else $('img-container').style.cursor = 'default';
     }
 }
 
 // ---------------- Pan & Zoom Logic ----------------
-
 $('img-container').addEventListener('wheel', (e) => {
     if (images.length === 0) return;
     if (e.ctrlKey) return;
@@ -943,58 +1174,40 @@ $('img-container').addEventListener('wheel', (e) => {
     }
 }, { passive: false });
 
-let isDragging = false;
-let dragStartX = 0, dragStartY = 0;
-
+let isDragging = false, dragStartX = 0, dragStartY = 0;
 $('img-container').addEventListener('mousedown', (e) => {
     if (scale > 1.0) {
-        e.preventDefault();
-        isDragging = true;
-        dragStartX = e.clientX - translateX;
-        dragStartY = e.clientY - translateY;
+        e.preventDefault(); isDragging = true;
+        dragStartX = e.clientX - translateX; dragStartY = e.clientY - translateY;
         $('img-container').style.cursor = 'grabbing';
     }
 });
-
 window.addEventListener('mousemove', (e) => {
     if (isDragging) {
         e.preventDefault();
-        translateX = e.clientX - dragStartX;
-        translateY = e.clientY - dragStartY;
+        translateX = e.clientX - dragStartX; translateY = e.clientY - dragStartY;
         applyTransform();
     }
 });
-
 window.addEventListener('mouseup', () => {
-    if (isDragging) {
-        isDragging = false;
-        $('img-container').style.cursor = 'grab';
-    }
+    if (isDragging) { isDragging = false; $('img-container').style.cursor = 'grab'; }
 });
 
 // Мобилки: Свайпы, Зум, Перетаскивание
-let touchMode = 'none'; 
-let touchStartX = 0, touchStartY = 0;
-let dragStartTouchX = 0, dragStartTouchY = 0;
-let initialDistance = 0;
+let touchMode = 'none', touchStartX = 0, touchStartY = 0;
+let dragStartTouchX = 0, dragStartTouchY = 0, initialDistance = 0;
 
 $('img-container').addEventListener('touchstart', (e) => {
     if (e.touches.length === 1) {
-        touchStartX = e.touches[0].clientX;
-        touchStartY = e.touches[0].clientY;
+        touchStartX = e.touches[0].clientX; touchStartY = e.touches[0].clientY;
         if (scale > 1.0) {
             touchMode = 'drag';
             dragStartTouchX = e.touches[0].clientX - translateX;
             dragStartTouchY = e.touches[0].clientY - translateY;
-        } else {
-            touchMode = 'swipe';
-        }
+        } else { touchMode = 'swipe'; }
     } else if (e.touches.length === 2) {
         touchMode = 'pinch';
-        initialDistance = Math.hypot(
-            e.touches[0].pageX - e.touches[1].pageX,
-            e.touches[0].pageY - e.touches[1].pageY
-        );
+        initialDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
     }
 }, { passive: false });
 
@@ -1006,10 +1219,7 @@ $('img-container').addEventListener('touchmove', (e) => {
         applyTransform();
     } else if (touchMode === 'pinch' && e.touches.length === 2) {
         e.preventDefault();
-        const currentDistance = Math.hypot(
-            e.touches[0].pageX - e.touches[1].pageX,
-            e.touches[0].pageY - e.touches[1].pageY
-        );
+        const currentDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
         if (initialDistance > 0) {
             scale = Math.max(1.0, Math.min(5.0, scale * (currentDistance / initialDistance)));
             if (scale === 1.0) { translateX = 0; translateY = 0; }
@@ -1021,16 +1231,10 @@ $('img-container').addEventListener('touchmove', (e) => {
 
 $('img-container').addEventListener('touchend', (e) => {
     if (touchMode === 'swipe') {
-        const t = e.changedTouches[0];
-        const dx = t.clientX - touchStartX;
-        const dy = t.clientY - touchStartY;
-        if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) {
-            if (dx < 0) nextImage(); else prevImage();
-        }
+        const t = e.changedTouches[0]; const dx = t.clientX - touchStartX; const dy = t.clientY - touchStartY;
+        if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) { if (dx < 0) nextImage(); else prevImage(); }
     }
-    if (e.touches.length === 0) {
-        touchMode = 'none';
-    }
+    if (e.touches.length === 0) touchMode = 'none';
 }, { passive: false });
 
 // ---------------- API Functions ----------------
@@ -1070,7 +1274,7 @@ async function deleteImage() {
 }
 
 async function pickFolder(key) {
-  const titles = { 'source': 'Select photo folder', 'not_nude': 'Select folder for Button 1', 'nude': 'Select folder for Button 2' };
+  const titles = { 'source': 'Select source folder', 'not_nude': 'Select target folder 1', 'nude': 'Select target folder 2' };
   toast('Opening folder selection dialog...');
   const r = await fetch('/api/pick-folder', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ title: titles[key] }) });
   const data = await r.json();
@@ -1104,18 +1308,14 @@ function closeSettings() { $('settings-modal').classList.remove('open'); }
 
 function toggleFullscreen() {
   if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen().catch(err => {
-      toast(`Error attempting to enable fullscreen: ${err.message}`, true);
-    });
-  } else {
-    document.exitFullscreen();
-  }
+    document.documentElement.requestFullscreen().catch(err => toast(`Error: ${err.message}`, true));
+  } else { document.exitFullscreen(); }
 }
 
 async function quitApp() {
   if (!confirm('Close application?')) return;
   try { await fetch('/api/quit', { method: 'POST' }); } catch (e) {}
-  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#666;font-family:sans-serif;">Application closed. You can close the tab.</div>';
+  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#666;font-family:sans-serif;">Application closed.</div>';
 }
 
 let toastTimer = null;
@@ -1124,7 +1324,6 @@ function toast(msg, isError) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
 }
 
-$('btn-fullscreen').onclick = toggleFullscreen;
 $('btn-settings').onclick = openSettings; $('btn-quit').onclick = quitApp; 
 $('btn-undo').onclick = undoLast;
 $('prev').onclick = prevImage; $('next').onclick = nextImage; $('b-up').onclick = () => changeBrightness(+0.1); $('b-down').onclick = () => changeBrightness(-0.1);
