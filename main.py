@@ -31,7 +31,7 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.7.3"
+CURRENT_VERSION = "1.7.4"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 INSTALL_DIR = r"C:\!PV" 
@@ -58,6 +58,7 @@ dialog_req = queue.Queue()
 dialog_res = queue.Queue()
 tk_root = None
 status_label = None
+counter_label = None
 update_btn = None
 pending_update_url = None
 quit_requested = threading.Event()
@@ -108,6 +109,16 @@ def scan_source():
     def key(f):
         return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', f)]
     state['images'] = sorted([f for f in names if f.lower().endswith(SUPPORTED)], key=key)
+
+def update_counter_ui():
+    if counter_label:
+        count = len(state['images'])
+        counter_label.config(text=f"Remaining photos: {count}")
+
+def refresh_source_and_ui():
+    scan_source()
+    if tk_root:
+        tk_root.after(0, update_counter_ui)
 
 def is_safe_name(name):
     return (bool(name) and '/' not in name and '\\' not in name and '..' not in name and ':' not in name)
@@ -165,10 +176,10 @@ def create_tray():
 
 # ----------------------- Auto-Update Logic -----------------------
 
-def check_for_updates():
+def check_for_updates(manual=False):
     global ignored_version
     if GITHUB_USER == "YOUR_NICKNAME" or GITHUB_REPO == "YOUR_REPO":
-        return
+        return False
 
     try:
         url = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases/latest"
@@ -178,7 +189,7 @@ def check_for_updates():
         
         latest_version = data.get('tag_name', '').lstrip('v')
         
-        if latest_version and latest_version != CURRENT_VERSION and latest_version != ignored_version:
+        if latest_version and latest_version != CURRENT_VERSION and (manual or latest_version != ignored_version):
             download_url = None
             for asset in data.get('assets', []):
                 if asset['name'].endswith('.zip'):
@@ -187,12 +198,32 @@ def check_for_updates():
             
             if tk_root and download_url:
                 tk_root.after(0, lambda: show_update_indicator(latest_version, download_url))
+            return True
+        return False
     except Exception as e:
         print(f"Update check error: {e}")
+        return False
+
+def force_check_update():
+    def do_check():
+        if status_label:
+            tk_root.after(0, lambda: status_label.config(text="Checking...", fg="#ffffff"))
+        
+        global ignored_version
+        ignored_version = None 
+        
+        found = check_for_updates(manual=True)
+        
+        if not found and tk_root:
+            tk_root.after(0, lambda: messagebox.showinfo("Updates", "You are already using the latest version.", parent=tk_root))
+            if status_label:
+                tk_root.after(0, lambda: status_label.config(text="Application is running.", fg="#ffffff"))
+    
+    threading.Thread(target=do_check, daemon=True).start()
 
 def update_loop():
     while not quit_requested.is_set():
-        check_for_updates()
+        check_for_updates(manual=False)
         for _ in range(3600):
             if quit_requested.is_set(): break
             time.sleep(1)
@@ -287,7 +318,7 @@ def api_state():
 @app.route('/api/restart', methods=['POST'])
 def api_restart():
     load_config()
-    scan_source()
+    refresh_source_and_ui()
     with moves_lock: undo_count = len(moves)
     return jsonify({
         'ok': True, 
@@ -331,7 +362,7 @@ def api_save_settings():
     state['labels']['nude'] = label_n
     
     save_config()
-    scan_source()
+    refresh_source_and_ui()
     with moves_lock: undo_count = len(moves)
     return jsonify({'ok': True, 'images': state['images'], 'undo_count': undo_count})
 
@@ -409,7 +440,7 @@ def api_classify():
     with moves_lock:
         moves.append({'src': src, 'dst': dst, 'name': name})
         undo_count = len(moves)
-    scan_source()
+    refresh_source_and_ui()
     return jsonify({'ok': True, 'images': state['images'], 'undo_count': undo_count})
 
 @app.route('/api/undo', methods=['POST'])
@@ -439,7 +470,7 @@ def api_undo():
         with moves_lock: moves.append(m)
         return jsonify({'ok': False, 'error': str(e)})
 
-    scan_source()
+    refresh_source_and_ui()
     with moves_lock: undo_count = len(moves)
     return jsonify({'ok': True, 'images': state['images'], 'undo_count': undo_count})
 
@@ -454,7 +485,7 @@ def api_delete():
         send2trash.send2trash(path)
     except Exception as e: 
         return jsonify({'ok': False, 'error': str(e)})
-    scan_source()
+    refresh_source_and_ui()
     with moves_lock: undo_count = len(moves)
     return jsonify({'ok': True, 'images': state['images'], 'undo_count': undo_count})
 
@@ -505,7 +536,7 @@ def create_dark_button(parent, text, command, is_primary=False):
     return btn
 
 def main():
-    global tk_root, status_label, update_btn, local_url_global
+    global tk_root, status_label, counter_label, update_btn, local_url_global
 
     load_config()
     if len(sys.argv) > 1:
@@ -532,7 +563,14 @@ def main():
     status_label = tk.Label(tk_root, text='Application is running.', bg='#141418', fg='#ffffff', font=('Segoe UI', 12, 'bold'))
     status_label.pack(pady=(10, 2))
     
-    tk.Label(tk_root, text=f'Version {CURRENT_VERSION}', bg='#141418', fg='#666666', font=('Segoe UI', 9)).pack(pady=(0, 5))
+    tk.Label(tk_root, text=f'Version {CURRENT_VERSION}', bg='#141418', fg='#666666', font=('Segoe UI', 9)).pack()
+    
+    counter_label = tk.Label(tk_root, text="Remaining photos: 0", bg='#141418', fg='#aaaaaa', font=('Segoe UI', 10))
+    counter_label.pack(pady=(5, 2))
+    update_counter_ui()
+
+    check_upd_btn = tk.Button(tk_root, text="🔍 Check for Updates", command=force_check_update, bg='#2a2a2a', fg='#ffffff', relief='flat', font=('Segoe UI', 8), cursor='hand2')
+    check_upd_btn.pack(pady=(0, 5))
 
     update_frame = tk.Frame(tk_root, bg='#141418')
     update_frame.pack()
@@ -543,7 +581,7 @@ def main():
     update_btn.bind('<Leave>', lambda e: update_btn.config(bg='#2d7d46'))
 
     if lan_ips:
-        tk.Label(tk_root, text='From local network / VPN:', bg='#141418', fg='#888888', font=('Segoe UI', 9)).pack(pady=(5, 0))
+        tk.Label(tk_root, text='From local network / VPN:', bg='#141418', fg='#888888', font=('Segoe UI', 9)).pack(pady=(10, 0))
         urls_frame = tk.Frame(tk_root, bg='#1e1e24', padx=15, pady=10)
         urls_frame.pack(pady=(5, 10), fill='x', padx=40)
         for ip in lan_ips:
@@ -552,13 +590,20 @@ def main():
     btn_frame = tk.Frame(tk_root, bg='#141418')
     btn_frame.pack(pady=(5, 10))
 
-    create_dark_button(btn_frame, 'Open in browser', lambda: webbrowser.open(local_url), is_primary=True).pack(side=tk.LEFT, padx=5)
-    create_dark_button(btn_frame, 'Hide to Tray', hide_window).pack(side=tk.LEFT, padx=5)
+    def reload_server_ui():
+        load_config()
+        scan_source()
+        update_counter_ui()
+        messagebox.showinfo("Info", "Server restarted / Folder reloaded", parent=tk_root)
+
+    create_dark_button(btn_frame, 'Restart', reload_server_ui).pack(side=tk.LEFT, padx=5)
+    create_dark_button(btn_frame, 'Open', lambda: webbrowser.open(local_url), is_primary=True).pack(side=tk.LEFT, padx=5)
+    create_dark_button(btn_frame, 'Hide', hide_window).pack(side=tk.LEFT, padx=5)
     create_dark_button(btn_frame, 'Exit', lambda: (tray_icon.stop(), quit_requested.set())).pack(side=tk.LEFT, padx=5)
 
     tk_root.update_idletasks()
     req_h = tk_root.winfo_reqheight()
-    tk_root.geometry(f"420x{req_h}")
+    tk_root.geometry(f"460x{req_h}")
 
     tk_root.protocol('WM_DELETE_WINDOW', hide_window)
 
@@ -612,7 +657,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
   #main { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; padding: 6px; touch-action: none; min-height: 0; }
   #img-container { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
   
-  /* Убрана анимация transform для плавного перетаскивания */
   #photo { max-width: 100%; max-height: 100%; object-fit: contain; display: none; user-select: none; -webkit-user-drag: none; transition: filter 0.1s linear; will-change: filter, transform; transform-origin: center center; }
   
   #photo-placeholder { color: #666; font-size: 16px; text-align: center; padding: 30px; }
@@ -693,7 +737,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
   <header>
     <span class="title">PhotoClassifier</span>
     <span class="spacer"></span>
-    <button id="btn-restart" title="Reload Settings & Photos">🔄</button>
     <button id="btn-fullscreen" title="Toggle Fullscreen (F)">⛶</button>
     <button id="btn-undo" disabled title="Undo last move (Ctrl+Z)">↶ (0)</button>
     <button id="btn-settings" title="Settings">⚙</button>
@@ -900,7 +943,6 @@ $('img-container').addEventListener('wheel', (e) => {
     }
 }, { passive: false });
 
-// ПК: Перетаскивание мышью
 let isDragging = false;
 let dragStartX = 0, dragStartY = 0;
 
@@ -931,7 +973,7 @@ window.addEventListener('mouseup', () => {
 });
 
 // Мобилки: Свайпы, Зум, Перетаскивание
-let touchMode = 'none'; // 'none', 'swipe', 'drag', 'pinch'
+let touchMode = 'none'; 
 let touchStartX = 0, touchStartY = 0;
 let dragStartTouchX = 0, dragStartTouchY = 0;
 let initialDistance = 0;
@@ -1057,24 +1099,6 @@ async function saveSettings() {
   updateUndoButton(data.undo_count); render(); closeSettings(); toast('Settings saved');
 }
 
-async function restartServer() {
-  try {
-    const r = await fetch('/api/restart', { method: 'POST' });
-    const data = await r.json();
-    if (!data.ok) { toast('Restart error', true); return; }
-    images = data.images || []; settings = data.settings || settings; currentIndex = 0; brightness = 1.0;
-    
-    $('source-folder').value = settings.source || ''; 
-    $('not-nude-folder').value = settings.not_nude || ''; 
-    $('nude-folder').value = settings.nude || '';
-    $('label-not-nude').value = settings.label_not_nude || 'Not Nude';
-    $('label-nude').value = settings.label_nude || 'Nude';
-    
-    updateUI();
-    updateUndoButton(data.undo_count || 0); render(); closeSettings(); toast('Server restarted');
-  } catch (e) { toast('Error: ' + e.message, true); }
-}
-
 function openSettings() { $('settings-modal').classList.add('open'); }
 function closeSettings() { $('settings-modal').classList.remove('open'); }
 
@@ -1100,7 +1124,6 @@ function toast(msg, isError) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
 }
 
-$('btn-restart').onclick = restartServer;
 $('btn-fullscreen').onclick = toggleFullscreen;
 $('btn-settings').onclick = openSettings; $('btn-quit').onclick = quitApp; 
 $('btn-undo').onclick = undoLast;
