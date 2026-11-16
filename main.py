@@ -15,6 +15,7 @@ import webbrowser
 import subprocess
 import tkinter as tk
 import zipfile
+import time
 from tkinter import filedialog, messagebox
 from pathlib import Path
 from collections import deque
@@ -25,10 +26,9 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.3.1"
+CURRENT_VERSION = "1.4.0"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
-# Папка, куда программа будет распаковывать обновления (замена файлов)
 INSTALL_DIR = r"C:\!PV" 
 # =====================================================================
 
@@ -42,6 +42,7 @@ app = Flask(__name__)
 state = {
     'source': None,
     'targets': {'not_nude': None, 'nude': None},
+    'labels': {'not_nude': 'Not Nude', 'nude': 'Nude'},
     'images': [],
 }
 
@@ -52,6 +53,7 @@ dialog_req = queue.Queue()
 dialog_res = queue.Queue()
 tk_root = None
 quit_requested = threading.Event()
+ignored_version = None  # Запоминаем версию, которую пользователь отклонил
 
 def resource_path(relative_path):
     try:
@@ -67,6 +69,8 @@ def load_config():
         state['source'] = data.get('source') or None
         state['targets']['not_nude'] = data.get('not_nude') or None
         state['targets']['nude'] = data.get('nude') or None
+        state['labels']['not_nude'] = data.get('label_not_nude') or 'Not Nude'
+        state['labels']['nude'] = data.get('label_nude') or 'Nude'
     except Exception: pass
 
 def save_config():
@@ -75,6 +79,8 @@ def save_config():
             'source': state['source'],
             'not_nude': state['targets']['not_nude'],
             'nude': state['targets']['nude'],
+            'label_not_nude': state['labels']['not_nude'],
+            'label_nude': state['labels']['nude'],
         }, ensure_ascii=False, indent=2), encoding='utf-8')
     except Exception: pass
 
@@ -121,6 +127,7 @@ def get_local_ips():
 # ----------------------- Auto-Update Logic -----------------------
 
 def check_for_updates():
+    global ignored_version
     if GITHUB_USER == "YOUR_NICKNAME" or GITHUB_REPO == "YOUR_REPO":
         return
 
@@ -133,37 +140,53 @@ def check_for_updates():
         latest_version = data.get('tag_name', '').lstrip('v')
         release_url = data.get('html_url', '')
         
-        if latest_version and latest_version != CURRENT_VERSION:
+        # Если есть новая версия и пользователь её еще не отклонял
+        if latest_version and latest_version != CURRENT_VERSION and latest_version != ignored_version:
             download_url = None
             for asset in data.get('assets', []):
                 if asset['name'].endswith('.zip'):
                     download_url = asset['browser_download_url']
                     break
             
-            tk_root.after(0, lambda: show_update_dialog(latest_version, release_url, download_url))
+            if tk_root:
+                tk_root.after(0, lambda: show_update_dialog(latest_version, release_url, download_url))
     except Exception as e:
         print(f"Update check error: {e}")
 
+def update_loop():
+    """Фоновая проверка обновлений раз в час."""
+    while not quit_requested.is_set():
+        check_for_updates()
+        # Ждем 1 час (3600 секунд), но проверяем флаг закрытия каждую секунду
+        for _ in range(3600):
+            if quit_requested.is_set(): break
+            time.sleep(1)
+
 def show_update_dialog(latest_version, release_url, download_url):
+    global ignored_version
+    
     msg = (f"A new version is available: {latest_version}\n"
            f"Your version: {CURRENT_VERSION}\n\n"
-           f"Download and install automatically to {INSTALL_DIR}?")
+           f"Download and install automatically?")
     
-    # Если это не скомпилированный .exe, просто открываем браузер
     if not getattr(sys, 'frozen', False) or not download_url:
         ans = messagebox.askyesno("Update Available!", f"{msg}\n\n(Will open browser)", parent=tk_root)
-        if ans: webbrowser.open(release_url)
+        if ans: 
+            webbrowser.open(release_url)
+        else:
+            ignored_version = latest_version
         return
 
     ans = messagebox.askyesno("Update Available!", msg, parent=tk_root)
     if ans:
         threading.Thread(target=download_and_update, args=(download_url,), daemon=True).start()
         messagebox.showinfo("Updating", "Downloading update in the background...\nThe app will restart automatically.", parent=tk_root)
+    else:
+        ignored_version = latest_version
 
 def download_and_update(download_url):
     try:
         exe_name = "PhotoClassifier.exe"
-        
         zip_name = "update.zip"
         zip_path = os.path.join(os.environ.get('TEMP', '.'), zip_name)
         update_dir = os.path.join(os.environ.get('TEMP', '.'), "pc_update_temp")
@@ -200,7 +223,8 @@ del "%~f0"
         quit_requested.set()
 
     except Exception as e:
-        tk_root.after(0, lambda: messagebox.showerror("Update Error", f"Failed to update: {e}", parent=tk_root))
+        if tk_root:
+            tk_root.after(0, lambda: messagebox.showerror("Update Error", f"Failed to update: {e}", parent=tk_root))
 
 # ----------------------- routes -----------------------
 
@@ -213,14 +237,35 @@ def favicon(): return send_file(resource_path('img/4040.png'), mimetype='image/p
 @app.route('/api/state')
 def api_state():
     with moves_lock: undo_count = len(moves)
-    return jsonify({'images': state['images'], 'settings': {'source': state['source'] or '', 'not_nude': state['targets']['not_nude'] or '', 'nude': state['targets']['nude'] or ''}, 'undo_count': undo_count})
+    return jsonify({
+        'images': state['images'], 
+        'settings': {
+            'source': state['source'] or '', 
+            'not_nude': state['targets']['not_nude'] or '', 
+            'nude': state['targets']['nude'] or '',
+            'label_not_nude': state['labels']['not_nude'],
+            'label_nude': state['labels']['nude']
+        }, 
+        'undo_count': undo_count
+    })
 
 @app.route('/api/restart', methods=['POST'])
 def api_restart():
     load_config()
     scan_source()
     with moves_lock: undo_count = len(moves)
-    return jsonify({'ok': True, 'images': state['images'], 'settings': {'source': state['source'] or '', 'not_nude': state['targets']['not_nude'] or '', 'nude': state['targets']['nude'] or ''}, 'undo_count': undo_count})
+    return jsonify({
+        'ok': True, 
+        'images': state['images'], 
+        'settings': {
+            'source': state['source'] or '', 
+            'not_nude': state['targets']['not_nude'] or '', 
+            'nude': state['targets']['nude'] or '',
+            'label_not_nude': state['labels']['not_nude'],
+            'label_nude': state['labels']['nude']
+        }, 
+        'undo_count': undo_count
+    })
 
 @app.route('/api/pick-folder', methods=['POST'])
 def api_pick_folder():
@@ -236,12 +281,20 @@ def api_save_settings():
     source = (data.get('source') or '').strip() or None
     not_nude = (data.get('not_nude') or '').strip() or None
     nude = (data.get('nude') or '').strip() or None
+    
+    label_nn = (data.get('label_not_nude') or '').strip() or 'Not Nude'
+    label_n = (data.get('label_nude') or '').strip() or 'Nude'
+
     if source and not os.path.isdir(source): return jsonify({'ok': False, 'error': 'Source folder does not exist'})
     if not_nude and not os.path.isdir(not_nude): return jsonify({'ok': False, 'error': 'Folder "Not Nude" does not exist'})
     if nude and not os.path.isdir(nude): return jsonify({'ok': False, 'error': 'Folder "Nude" does not exist'})
+    
     state['source'] = source
     state['targets']['not_nude'] = not_nude
     state['targets']['nude'] = nude
+    state['labels']['not_nude'] = label_nn
+    state['labels']['nude'] = label_n
+    
     save_config()
     scan_source()
     with moves_lock: undo_count = len(moves)
@@ -419,7 +472,8 @@ def main():
         except Exception as e: print('Flask error:', e)
 
     threading.Thread(target=run_flask, daemon=True).start()
-    threading.Thread(target=check_for_updates, daemon=True).start()
+    # Запускаем цикл проверки обновлений вместо одиночного вызова
+    threading.Thread(target=update_loop, daemon=True).start()
 
     tk_root.after(400, lambda: webbrowser.open(local_url))
     tk_root.after(100, tk_pump)
@@ -461,7 +515,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
   #counter { margin-left: auto; font-size: 12px; color: #888; font-family: Consolas, monospace; padding-left: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45vw; }
   
   footer { display: flex; gap: 20px; padding: 16px 24px; justify-content: center; background: #1a1a1a; border-top: 1px solid #333; flex-wrap: wrap; }
-  .action-btn { padding: 42px 96px; font-size: 48px; font-weight: 700; border: none; border-radius: 14px; cursor: pointer; min-width: 280px; letter-spacing: 1px; transition: transform 0.1s, filter 0.15s; touch-action: manipulation; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+  .action-btn { padding: 42px 96px; font-size: 48px; font-weight: 700; border: none; border-radius: 14px; cursor: pointer; min-width: 280px; letter-spacing: 1px; transition: transform 0.1s, filter 0.15s; touch-action: manipulation; box-shadow: 0 4px 12px rgba(0,0,0,0.4); word-break: break-word; }
   .action-btn:active { transform: scale(0.97); }
   .action-btn:disabled { opacity: 0.35; cursor: not-allowed; }
   #btn-not-nude { background: #a83a3a; color: #fff; }
@@ -537,6 +591,20 @@ HTML_PAGE = r'''<!DOCTYPE html>
   <div class="modal-bg" id="settings-modal">
     <div class="modal">
       <h2>Folder Settings</h2>
+      
+      <div class="field">
+        <label>Button 1 Name (Red)</label>
+        <div class="row">
+          <input type="text" id="label-not-nude" placeholder="Not Nude">
+        </div>
+      </div>
+      <div class="field">
+        <label>Button 2 Name (Green)</label>
+        <div class="row">
+          <input type="text" id="label-nude" placeholder="Nude">
+        </div>
+      </div>
+
       <div class="field">
         <label>Photo folder (source)</label>
         <div class="row">
@@ -545,14 +613,14 @@ HTML_PAGE = r'''<!DOCTYPE html>
         </div>
       </div>
       <div class="field">
-        <label>Save "Not Nude" to</label>
+        <label>Save Button 1 photos to</label>
         <div class="row">
           <input type="text" id="not-nude-folder" readonly placeholder="Not selected">
           <button onclick="pickFolder('not_nude')">Browse...</button>
         </div>
       </div>
       <div class="field">
-        <label>Save "Nude" to</label>
+        <label>Save Button 2 photos to</label>
         <div class="row">
           <input type="text" id="nude-folder" readonly placeholder="Not selected">
           <button onclick="pickFolder('nude')">Browse...</button>
@@ -569,7 +637,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
 <script>
 let images = [];
 let currentIndex = 0;
-let settings = { source: '', not_nude: '', nude: '' };
+let settings = { source: '', not_nude: '', nude: '', label_not_nude: 'Not Nude', label_nude: 'Nude' };
 let brightness = 1.0;
 const $ = (id) => document.getElementById(id);
 
@@ -579,11 +647,22 @@ async function loadState() {
   images = data.images || [];
   currentIndex = 0;
   settings = data.settings || settings;
+  
   $('source-folder').value = settings.source || '';
   $('not-nude-folder').value = settings.not_nude || '';
   $('nude-folder').value = settings.nude || '';
+  
+  $('label-not-nude').value = settings.label_not_nude || 'Not Nude';
+  $('label-nude').value = settings.label_nude || 'Nude';
+  
+  updateUI();
   updateUndoButton(data.undo_count || 0);
   render();
+}
+
+function updateUI() {
+  $('btn-not-nude').textContent = settings.label_not_nude || 'Not Nude';
+  $('btn-nude').textContent = settings.label_nude || 'Nude';
 }
 
 function updateUndoButton(count) {
@@ -660,7 +739,7 @@ async function deleteImage() {
 }
 
 async function pickFolder(key) {
-  const titles = { 'source': 'Select photo folder', 'not_nude': 'Select folder for "Not Nude"', 'nude': 'Select folder for "Nude"' };
+  const titles = { 'source': 'Select photo folder', 'not_nude': 'Select folder for Button 1', 'nude': 'Select folder for Button 2' };
   toast('Opening folder selection dialog...');
   const r = await fetch('/api/pick-folder', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ title: titles[key] }) });
   const data = await r.json();
@@ -672,11 +751,20 @@ async function pickFolder(key) {
 }
 
 async function saveSettings() {
-  const body = { source: $('source-folder').value, not_nude: $('not-nude-folder').value, nude: $('nude-folder').value };
+  const body = { 
+    source: $('source-folder').value, 
+    not_nude: $('not-nude-folder').value, 
+    nude: $('nude-folder').value,
+    label_not_nude: $('label-not-nude').value.trim() || 'Not Nude',
+    label_nude: $('label-nude').value.trim() || 'Nude'
+  };
+  
   const r = await fetch('/api/save-settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
   const data = await r.json();
   if (!data.ok) { toast('Error: ' + data.error, true); return; }
+  
   settings = body; images = data.images; currentIndex = 0; brightness = 1.0;
+  updateUI();
   updateUndoButton(data.undo_count); render(); closeSettings(); toast('Settings saved');
 }
 
@@ -686,7 +774,14 @@ async function restartServer() {
     const data = await r.json();
     if (!data.ok) { toast('Restart error', true); return; }
     images = data.images || []; settings = data.settings || settings; currentIndex = 0; brightness = 1.0;
-    $('source-folder').value = settings.source || ''; $('not-nude-folder').value = settings.not_nude || ''; $('nude-folder').value = settings.nude || '';
+    
+    $('source-folder').value = settings.source || ''; 
+    $('not-nude-folder').value = settings.not_nude || ''; 
+    $('nude-folder').value = settings.nude || '';
+    $('label-not-nude').value = settings.label_not_nude || 'Not Nude';
+    $('label-nude').value = settings.label_nude || 'Nude';
+    
+    updateUI();
     updateUndoButton(data.undo_count || 0); render(); closeSettings(); toast('Server restarted');
   } catch (e) { toast('Error: ' + e.message, true); }
 }
