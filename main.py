@@ -25,9 +25,11 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.3.0"
+CURRENT_VERSION = "1.3.1"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
+# Папка, куда программа будет распаковывать обновления (замена файлов)
+INSTALL_DIR = r"C:\!PV" 
 # =====================================================================
 
 SUPPORTED = ('.jpg', '.jpeg', '.png', '.gif', '.bmp',
@@ -133,7 +135,6 @@ def check_for_updates():
         
         if latest_version and latest_version != CURRENT_VERSION:
             download_url = None
-            # Ищем ZIP архив в релизе
             for asset in data.get('assets', []):
                 if asset['name'].endswith('.zip'):
                     download_url = asset['browser_download_url']
@@ -146,8 +147,9 @@ def check_for_updates():
 def show_update_dialog(latest_version, release_url, download_url):
     msg = (f"A new version is available: {latest_version}\n"
            f"Your version: {CURRENT_VERSION}\n\n"
-           f"Download and install automatically?")
+           f"Download and install automatically to {INSTALL_DIR}?")
     
+    # Если это не скомпилированный .exe, просто открываем браузер
     if not getattr(sys, 'frozen', False) or not download_url:
         ans = messagebox.askyesno("Update Available!", f"{msg}\n\n(Will open browser)", parent=tk_root)
         if ans: webbrowser.open(release_url)
@@ -156,19 +158,17 @@ def show_update_dialog(latest_version, release_url, download_url):
     ans = messagebox.askyesno("Update Available!", msg, parent=tk_root)
     if ans:
         threading.Thread(target=download_and_update, args=(download_url,), daemon=True).start()
-        messagebox.showinfo("Updating", "Downloading update... The app will restart automatically.", parent=tk_root)
+        messagebox.showinfo("Updating", "Downloading update in the background...\nThe app will restart automatically.", parent=tk_root)
 
 def download_and_update(download_url):
     try:
-        exe_path = sys.executable
-        exe_dir = os.path.dirname(exe_path)
-        exe_name = os.path.basename(exe_path)
+        exe_name = "PhotoClassifier.exe"
         
         zip_name = "update.zip"
-        zip_path = os.path.join(exe_dir, zip_name)
-        update_dir = os.path.join(exe_dir, "update_temp")
+        zip_path = os.path.join(os.environ.get('TEMP', '.'), zip_name)
+        update_dir = os.path.join(os.environ.get('TEMP', '.'), "pc_update_temp")
         
-        # 1. Скачиваем ZIP
+        # 1. Скачиваем архив
         r = requests.get(download_url, stream=True)
         r.raise_for_status()
         with open(zip_path, 'wb') as f:
@@ -182,20 +182,20 @@ def download_and_update(download_url):
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(update_dir)
 
-        # 3. Создаем BAT для замены файлов
-        bat_path = os.path.join(exe_dir, "update.bat")
+        # 3. Создаем скрытый BAT для замены файлов
+        bat_path = os.path.join(os.environ.get('TEMP', '.'), "update_pc.bat")
         with open(bat_path, "w") as f:
             f.write(f"""@echo off
 timeout /t 2 /nobreak > NUL
 taskkill /IM "{exe_name}" /F > NUL 2>&1
-xcopy /s /y /i /q "{update_dir}\\*" ".\\"
+xcopy /s /y /i /q "{update_dir}\\*" "{INSTALL_DIR}\\"
 rmdir /s /q "{update_dir}"
-del "{zip_name}"
-start "" "{exe_name}"
+del "{zip_path}"
+start "" "{INSTALL_DIR}\\{exe_name}"
 del "%~f0"
 """)
 
-        # Запускаем без черного окна консоли и закрываем прогу
+        # Запускаем батник СКРЫТО и закрываем прогу
         subprocess.Popen(f'"{bat_path}"', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         quit_requested.set()
 
