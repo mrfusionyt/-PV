@@ -1,5 +1,5 @@
 # Dependencies:
-#   & 'C:\Program Files\Python314\python.exe' -m pip install --upgrade Flask Pillow requests
+#   & 'C:\Program Files\Python314\python.exe' -m pip install --upgrade Flask Pillow requests send2trash
 #
 # Build to .exe:
 #   & 'C:\Program Files\Python314\python.exe' -m PyInstaller --noconfirm --windowed --name PhotoClassifier --icon=img/8080.png --add-data "img;img" main.py
@@ -20,13 +20,14 @@ from tkinter import filedialog, messagebox
 from pathlib import Path
 from collections import deque
 import requests
+import send2trash
 
 from flask import Flask, request, jsonify, send_file
 
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.4.1"
+CURRENT_VERSION = "1.5.0"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 INSTALL_DIR = r"C:\!PV" 
@@ -162,7 +163,6 @@ def update_loop():
 
 def show_update_dialog(latest_version, release_url, download_url):
     global ignored_version
-    
     msg = (f"A new version is available: {latest_version}\n"
            f"Your version: {CURRENT_VERSION}\n\n"
            f"Download and install automatically?")
@@ -177,10 +177,8 @@ def show_update_dialog(latest_version, release_url, download_url):
 
     ans = messagebox.askyesno("Update Available!", msg, parent=tk_root)
     if ans:
-        # Меняем текст в главном окне, чтобы показать, что идет скачивание
         if status_label:
             status_label.config(text="Downloading update...", fg="#ff3b5c")
-            
         threading.Thread(target=download_and_update, args=(download_url,), daemon=True).start()
     else:
         ignored_version = latest_version
@@ -216,7 +214,6 @@ start "" "{INSTALL_DIR}\\{exe_name}"
 del "%~f0"
 """)
 
-        # Запускаем батник СКРЫТО и закрываем прогу
         subprocess.Popen(f'"{bat_path}"', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         quit_requested.set()
 
@@ -372,8 +369,10 @@ def api_delete():
     if not is_safe_name(name) or not state['source']: return jsonify({'ok': False, 'error': 'Invalid file name'})
     path = os.path.join(state['source'], name)
     if not os.path.isfile(path): return jsonify({'ok': False, 'error': 'File not found'})
-    try: os.remove(path)
-    except Exception as e: return jsonify({'ok': False, 'error': str(e)})
+    try: 
+        send2trash.send2trash(path) # Отправляем в Корзину!
+    except Exception as e: 
+        return jsonify({'ok': False, 'error': str(e)})
     scan_source()
     with moves_lock: undo_count = len(moves)
     return jsonify({'ok': True, 'images': state['images'], 'undo_count': undo_count})
@@ -474,8 +473,6 @@ def main():
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=update_loop, daemon=True).start()
 
-    # Автоматическое открытие браузера убрано!
-    
     tk_root.after(100, tk_pump)
     tk_root.mainloop()
 
@@ -491,30 +488,37 @@ HTML_PAGE = r'''<!DOCTYPE html>
   html, body { height: 100%; overflow: hidden; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
   body { background: #111; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
   
-  header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1a1a1a; border-bottom: 1px solid #333; flex-wrap: wrap; }
+  /* НОВОЕ: Полоса прогресса */
+  #progress-container { position: absolute; top: 0; left: 0; width: 100%; height: 3px; background: #333; z-index: 10; }
+  #progress-bar { height: 100%; background: #2d7d46; width: 0%; transition: width 0.3s ease; }
+
+  header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1a1a1a; border-bottom: 1px solid #333; flex-wrap: wrap; position: relative; z-index: 5; }
   header .title { font-weight: 600; font-size: 14px; }
   header .spacer { flex: 1; }
   header button { background: #2a2a2a; color: #eee; border: 1px solid #444; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; touch-action: manipulation; white-space: nowrap; }
   header button:hover { background: #3a3a3a; }
   header button:disabled { opacity: 0.35; cursor: not-allowed; }
   
-  #main { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; padding: 6px; touch-action: pan-y; min-height: 0; }
-  #photo { max-width: 100%; max-height: 100%; object-fit: contain; display: none; user-select: none; -webkit-user-drag: none; transition: filter 0.1s linear; will-change: filter; }
+  /* НОВОЕ: Контейнер для зума */
+  #main { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; padding: 6px; touch-action: none; min-height: 0; }
+  #img-container { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  #photo { max-width: 100%; max-height: 100%; object-fit: contain; display: none; user-select: none; -webkit-user-drag: none; transition: filter 0.1s linear, transform 0.1s ease-out; will-change: filter, transform; transform-origin: center center; }
   #photo-placeholder { color: #666; font-size: 16px; text-align: center; padding: 30px; }
-  .nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.35); color: #fff; border: none; width: 70px; height: 130px; font-size: 40px; cursor: pointer; opacity: 0.65; transition: opacity 0.15s, background 0.15s; user-select: none; touch-action: manipulation; display: flex; align-items: center; justify-content: center; }
+  
+  .nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.35); color: #fff; border: none; width: 70px; height: 130px; font-size: 40px; cursor: pointer; opacity: 0.65; transition: opacity 0.15s, background 0.15s; user-select: none; touch-action: manipulation; display: flex; align-items: center; justify-content: center; z-index: 10; }
   .nav:hover { opacity: 1; background: rgba(0,0,0,0.6); }
   .nav:active { background: rgba(0,0,0,0.8); }
   #prev { left: 0; border-radius: 0 10px 10px 0; }
   #next { right: 0; border-radius: 10px 0 0 10px; }
   
-  #toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #1a1a1a; border-top: 1px solid #333; justify-content: center; flex-wrap: wrap; }
+  #toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #1a1a1a; border-top: 1px solid #333; justify-content: center; flex-wrap: wrap; z-index: 5; position: relative; }
   #toolbar button { background: #2a2a2a; color: #eee; border: 1px solid #444; width: 48px; height: 48px; border-radius: 8px; cursor: pointer; font-size: 22px; font-weight: 600; touch-action: manipulation; display: flex; align-items: center; justify-content: center; }
   #toolbar button:hover { background: #3a3a3a; }
   #toolbar button:active { background: #4a4a4a; }
   #brightness-value { font-family: Consolas, monospace; color: #ccc; font-size: 16px; min-width: 60px; text-align: center; }
   #counter { margin-left: auto; font-size: 12px; color: #888; font-family: Consolas, monospace; padding-left: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45vw; }
   
-  footer { display: flex; gap: 20px; padding: 16px 24px; justify-content: center; background: #1a1a1a; border-top: 1px solid #333; flex-wrap: wrap; }
+  footer { display: flex; gap: 20px; padding: 16px 24px; justify-content: center; background: #1a1a1a; border-top: 1px solid #333; flex-wrap: wrap; z-index: 5; position: relative; }
   .action-btn { padding: 42px 96px; font-size: 48px; font-weight: 700; border: none; border-radius: 14px; cursor: pointer; min-width: 280px; letter-spacing: 1px; transition: transform 0.1s, filter 0.15s; touch-action: manipulation; box-shadow: 0 4px 12px rgba(0,0,0,0.4); word-break: break-word; }
   .action-btn:active { transform: scale(0.97); }
   .action-btn:disabled { opacity: 0.35; cursor: not-allowed; }
@@ -563,6 +567,8 @@ HTML_PAGE = r'''<!DOCTYPE html>
 </style>
 </head>
 <body>
+  <div id="progress-container"><div id="progress-bar"></div></div>
+  
   <header>
     <span class="title">PhotoClassifier</span>
     <span class="spacer"></span>
@@ -574,8 +580,10 @@ HTML_PAGE = r'''<!DOCTYPE html>
   <div id="main">
     <button id="prev" class="nav" title="Back (←)">‹</button>
     <button id="next" class="nav" title="Next (→)">›</button>
-    <img id="photo" alt="" draggable="false">
-    <div id="photo-placeholder">Click ⚙ to select a photo folder</div>
+    <div id="img-container">
+      <img id="photo" alt="" draggable="false">
+      <div id="photo-placeholder">Click ⚙ to select a photo folder</div>
+    </div>
   </div>
   <div id="toolbar">
     <button id="b-down" title="Darker (↓)">☀−</button>
@@ -639,6 +647,13 @@ let images = [];
 let currentIndex = 0;
 let settings = { source: '', not_nude: '', nude: '', label_not_nude: 'Not Nude', label_nude: 'Nude' };
 let brightness = 1.0;
+
+// Переменные для зума
+let scale = 1.0;
+let translateX = 0, translateY = 0;
+let isDragging = false;
+let startX, startY;
+
 const $ = (id) => document.getElementById(id);
 
 async function loadState() {
@@ -674,18 +689,39 @@ function updateUndoButton(count) {
 
 function render() {
   const img = $('photo'); const ph = $('photo-placeholder'); const counter = $('counter'); const btnNN = $('btn-not-nude'); const btnN = $('btn-nude');
+  const progressBar = $('progress-bar');
+  
+  // Сброс зума при смене фото
+  scale = 1.0; translateX = 0; translateY = 0;
+  applyTransform();
+
   if (images.length === 0) {
     img.style.display = 'none'; img.removeAttribute('src'); ph.style.display = 'block';
     ph.textContent = settings.source ? 'No images in the selected folder (or all processed)' : 'Click ⚙ to select a photo folder';
-    counter.textContent = ''; btnNN.disabled = true; btnN.disabled = true; applyBrightness(); return;
+    counter.textContent = ''; btnNN.disabled = true; btnN.disabled = true; applyBrightness(); 
+    progressBar.style.width = '0%';
+    return;
   }
   if (currentIndex < 0) currentIndex = images.length - 1;
   if (currentIndex >= images.length) currentIndex = images.length - 1;
+  
   const name = images[currentIndex];
   img.src = '/api/image?name=' + encodeURIComponent(name) + '&t=' + Date.now();
   img.style.display = 'block'; ph.style.display = 'none';
   counter.textContent = (currentIndex + 1) + ' / ' + images.length + ' — ' + name; counter.title = name;
   btnNN.disabled = false; btnN.disabled = false; applyBrightness();
+  
+  // Обновляем полосу прогресса
+  const progressPercent = ((currentIndex + 1) / images.length) * 100;
+  progressBar.style.width = progressPercent + '%';
+
+  // ПРЕДЗАГРУЗКА следующего фото (Preloading)
+  if (images.length > 1) {
+      const nextIndex = (currentIndex + 1) % images.length;
+      const nextName = images[nextIndex];
+      const preloadImg = new Image();
+      preloadImg.src = '/api/image?name=' + encodeURIComponent(nextName) + '&t=' + Date.now();
+  }
 }
 
 function applyBrightness() {
@@ -703,6 +739,79 @@ function changeBrightness(delta) {
 function resetBrightness() { brightness = 1.0; applyBrightness(); }
 function nextImage() { if (images.length === 0) return; currentIndex = (currentIndex + 1) % images.length; brightness = 1.0; render(); }
 function prevImage() { if (images.length === 0) return; currentIndex = (currentIndex - 1 + images.length) % images.length; brightness = 1.0; render(); }
+
+// Функция для зума
+function applyTransform() {
+    const img = $('photo');
+    if (img) {
+        img.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+    }
+}
+
+// Слушатель колесика мыши для зума и навигации
+$('img-container').addEventListener('wheel', (e) => {
+    if (images.length === 0) return;
+    if (e.ctrlKey) return; // Игнорируем системный зум
+
+    // Если фото уже увеличено, крутим колесико для зума
+    if (scale > 1.0) {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.2 : 0.2;
+        scale = Math.max(1.0, Math.min(5.0, scale + delta));
+        if (scale === 1.0) { translateX = 0; translateY = 0; }
+        applyTransform();
+    } else {
+        // Если фото не увеличено, крутим колесико для перелистывания
+        if (e.deltaY > 0) nextImage();
+        else prevImage();
+    }
+}, { passive: false });
+
+// Перетаскивание (Pan) при увеличении
+$('img-container').addEventListener('mousedown', (e) => {
+    if (scale > 1.0) {
+        isDragging = true;
+        startX = e.clientX - translateX;
+        startY = e.clientY - translateY;
+        $('photo').style.cursor = 'grabbing';
+    }
+});
+window.addEventListener('mousemove', (e) => {
+    if (isDragging) {
+        translateX = e.clientX - startX;
+        translateY = e.clientY - startY;
+        applyTransform();
+    }
+});
+window.addEventListener('mouseup', () => {
+    isDragging = false;
+    $('photo').style.cursor = 'default';
+});
+
+// Поддержка щипка (Pinch to zoom) для телефонов
+let initialDistance = 0;
+$('img-container').addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+        initialDistance = Math.hypot(
+            e.touches[0].pageX - e.touches[1].pageX,
+            e.touches[0].pageY - e.touches[1].pageY
+        );
+    }
+}, { passive: true });
+$('img-container').addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2) {
+        e.preventDefault();
+        const currentDistance = Math.hypot(
+            e.touches[0].pageX - e.touches[1].pageX,
+            e.touches[0].pageY - e.touches[1].pageY
+        );
+        if (initialDistance > 0) {
+            scale = Math.max(1.0, Math.min(5.0, scale * (currentDistance / initialDistance)));
+            applyTransform();
+            initialDistance = currentDistance;
+        }
+    }
+}, { passive: false });
 
 async function classify(category) {
   if (images.length === 0) return;
@@ -728,7 +837,7 @@ async function undoLast() {
 
 async function deleteImage() {
   if (images.length === 0) return;
-  if (!confirm('Delete file permanently?\n\n' + images[currentIndex])) return;
+  if (!confirm('Move file to Recycle Bin?\n\n' + images[currentIndex])) return;
   const name = images[currentIndex];
   const r = await fetch('/api/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name: name }) });
   const data = await r.json();
@@ -802,7 +911,7 @@ function toast(msg, isError) {
 }
 
 (function setupSwipe() {
-  const main = $('main'); let startX = 0, startY = 0, tracking = false;
+  const main = $('img-container'); let startX = 0, startY = 0, tracking = false;
   main.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 1) { tracking = false; return; }
     if (e.target.closest('button')) { tracking = false; return; }
@@ -810,6 +919,7 @@ function toast(msg, isError) {
   }, { passive: true });
   main.addEventListener('touchend', (e) => {
     if (!tracking) return; tracking = false;
+    if (scale > 1.0) return; // Отключаем свайп, если фото приближено
     const t = e.changedTouches[0]; const dx = t.clientX - startX; const dy = t.clientY - startY;
     if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
     if (dx < 0) nextImage(); else prevImage();
