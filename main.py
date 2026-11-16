@@ -29,7 +29,7 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.6.1"
+CURRENT_VERSION = "1.6.2"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 INSTALL_DIR = r"C:\!PV" 
@@ -154,7 +154,6 @@ def check_for_updates():
                     break
             
             if tk_root and download_url:
-                # Вызываем показ кнопки обновления в главном потоке
                 tk_root.after(0, lambda: show_update_indicator(latest_version, download_url))
     except Exception as e:
         print(f"Update check error: {e}")
@@ -171,7 +170,8 @@ def show_update_indicator(latest_version, download_url):
     pending_update_url = download_url
     if update_btn:
         update_btn.config(text=f"⬇ Update to v{latest_version}", bg="#2d7d46")
-        update_btn.pack(pady=(5, 5), before=update_btn.master.winfo_children()[3]) # Вставляем перед IP-адресами
+        # Показываем кнопку обновления под версией
+        update_btn.pack(pady=(5, 5), before=tk_root.winfo_children()[2])
         if status_label:
             status_label.config(text="Update Available!", fg="#ff3b5c")
 
@@ -457,7 +457,8 @@ def main():
 
     tk_root = tk.Tk()
     tk_root.title('PhotoClassifier')
-    tk_root.geometry('420x340')
+    # Устанавливаем только ширину, высота подстроится сама под контент + отступы
+    tk_root.geometry('420x')
     tk_root.resizable(False, False)
     tk_root.configure(bg='#141418')
 
@@ -466,27 +467,27 @@ def main():
         tk_root.iconphoto(True, icon_img)
     except Exception: pass
 
+    # Верхний отступ ровно 10px
     status_label = tk.Label(tk_root, text='Application is running.', bg='#141418', fg='#ffffff', font=('Segoe UI', 12, 'bold'))
-    status_label.pack(pady=(20, 5))
+    status_label.pack(pady=(10, 2))
     
-    tk.Label(tk_root, text=f'Version {CURRENT_VERSION}', bg='#141418', fg='#666666', font=('Segoe UI', 9)).pack()
+    tk.Label(tk_root, text=f'Version {CURRENT_VERSION}', bg='#141418', fg='#666666', font=('Segoe UI', 9)).pack(pady=(0, 5))
 
-    # Скрытая кнопка для обновления
     update_btn = create_dark_button(tk_root, '', trigger_update, is_primary=True)
-    update_btn.config(bg="#2d7d46", activebackground="#369b56") # Зеленая кнопка для обновления
+    update_btn.config(bg="#2d7d46", activebackground="#369b56")
     update_btn.bind('<Enter>', lambda e: update_btn.config(bg='#369b56'))
     update_btn.bind('<Leave>', lambda e: update_btn.config(bg='#2d7d46'))
 
     if lan_ips:
-        tk.Label(tk_root, text='From local network / VPN:', bg='#141418', fg='#888888', font=('Segoe UI', 9)).pack(pady=(10, 0))
+        tk.Label(tk_root, text='From local network / VPN:', bg='#141418', fg='#888888', font=('Segoe UI', 9)).pack(pady=(5, 0))
         urls_frame = tk.Frame(tk_root, bg='#1e1e24', padx=15, pady=10)
-        urls_frame.pack(pady=(5, 15), fill='x', padx=40)
+        urls_frame.pack(pady=(5, 10), fill='x', padx=40)
         for ip in lan_ips:
             tk.Label(urls_frame, text=f'http://{ip}:{port}', bg='#1e1e24', fg='#ff3b5c', font=('Consolas', 11)).pack(anchor='w')
 
-    # Контейнер для кнопок (в один ряд)
     btn_frame = tk.Frame(tk_root, bg='#141418')
-    btn_frame.pack(pady=(10, 20))
+    # Нижний отступ ровно 10px
+    btn_frame.pack(pady=(5, 10))
 
     create_dark_button(btn_frame, 'Open in browser', lambda: webbrowser.open(local_url), is_primary=True).pack(side=tk.LEFT, padx=5)
     create_dark_button(btn_frame, 'Exit', lambda: quit_requested.set()).pack(side=tk.LEFT, padx=5)
