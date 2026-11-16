@@ -24,7 +24,7 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.2.0"
+CURRENT_VERSION = "1.2.4"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 # =====================================================================
@@ -131,14 +131,12 @@ def check_for_updates():
         release_url = data.get('html_url', '')
         
         if latest_version and latest_version != CURRENT_VERSION:
-            # Ищем прямую ссылку на .exe файл в релизе
             download_url = None
             for asset in data.get('assets', []):
                 if asset['name'].endswith('.exe'):
                     download_url = asset['browser_download_url']
                     break
             
-            # Передаем управление в главный поток Tkinter
             tk_root.after(0, lambda: show_update_dialog(latest_version, release_url, download_url))
     except Exception as e:
         print(f"Update check error: {e}")
@@ -148,7 +146,6 @@ def show_update_dialog(latest_version, release_url, download_url):
            f"Your version: {CURRENT_VERSION}\n\n"
            f"Download and install automatically?")
     
-    # Если это не .exe (запущено из исходников), предлагаем просто открыть браузер
     if not getattr(sys, 'frozen', False) or not download_url:
         ans = messagebox.askyesno("Update Available!", f"{msg}\n\n(Will open browser)", parent=tk_root)
         if ans: webbrowser.open(release_url)
@@ -156,7 +153,6 @@ def show_update_dialog(latest_version, release_url, download_url):
 
     ans = messagebox.askyesno("Update Available!", msg, parent=tk_root)
     if ans:
-        # Запускаем скачивание в фоне, чтобы не вешать UI
         threading.Thread(target=download_and_update, args=(download_url,), daemon=True).start()
         messagebox.showinfo("Updating", "Downloading update... The app will restart automatically.", parent=tk_root)
 
@@ -168,14 +164,12 @@ def download_and_update(download_url):
         new_exe_name = "PhotoClassifier_new.exe"
         new_exe_path = os.path.join(exe_dir, new_exe_name)
 
-        # Скачиваем файл
         r = requests.get(download_url, stream=True)
         r.raise_for_status()
         with open(new_exe_path, 'wb') as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
 
-        # Создаем bat-скрипт для замены файла
         bat_path = os.path.join(exe_dir, "update.bat")
         with open(bat_path, "w") as f:
             f.write(f"""@echo off
@@ -186,9 +180,8 @@ start "" "{exe_name}"
 del "%~f0"
 """)
 
-        # Запускаем bat и закрываем программу
         subprocess.Popen([bat_path], shell=True)
-        quit_requested.set() # Даем команду Tkinter закрыться
+        quit_requested.set()
 
     except Exception as e:
         tk_root.after(0, lambda: messagebox.showerror("Update Error", f"Failed to update: {e}", parent=tk_root))
@@ -427,12 +420,14 @@ HTML_PAGE = r'''<!DOCTYPE html>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; overflow: hidden; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
   body { background: #111; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+  
   header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1a1a1a; border-bottom: 1px solid #333; flex-wrap: wrap; }
   header .title { font-weight: 600; font-size: 14px; }
   header .spacer { flex: 1; }
   header button { background: #2a2a2a; color: #eee; border: 1px solid #444; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; touch-action: manipulation; white-space: nowrap; }
   header button:hover { background: #3a3a3a; }
   header button:disabled { opacity: 0.35; cursor: not-allowed; }
+  
   #main { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; padding: 6px; touch-action: pan-y; min-height: 0; }
   #photo { max-width: 100%; max-height: 100%; object-fit: contain; display: none; user-select: none; -webkit-user-drag: none; transition: filter 0.1s linear; will-change: filter; }
   #photo-placeholder { color: #666; font-size: 16px; text-align: center; padding: 30px; }
@@ -441,12 +436,14 @@ HTML_PAGE = r'''<!DOCTYPE html>
   .nav:active { background: rgba(0,0,0,0.8); }
   #prev { left: 0; border-radius: 0 10px 10px 0; }
   #next { right: 0; border-radius: 10px 0 0 10px; }
+  
   #toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #1a1a1a; border-top: 1px solid #333; justify-content: center; flex-wrap: wrap; }
   #toolbar button { background: #2a2a2a; color: #eee; border: 1px solid #444; width: 48px; height: 48px; border-radius: 8px; cursor: pointer; font-size: 22px; font-weight: 600; touch-action: manipulation; display: flex; align-items: center; justify-content: center; }
   #toolbar button:hover { background: #3a3a3a; }
   #toolbar button:active { background: #4a4a4a; }
   #brightness-value { font-family: Consolas, monospace; color: #ccc; font-size: 16px; min-width: 60px; text-align: center; }
   #counter { margin-left: auto; font-size: 12px; color: #888; font-family: Consolas, monospace; padding-left: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45vw; }
+  
   footer { display: flex; gap: 20px; padding: 16px 24px; justify-content: center; background: #1a1a1a; border-top: 1px solid #333; flex-wrap: wrap; }
   .action-btn { padding: 42px 96px; font-size: 48px; font-weight: 700; border: none; border-radius: 14px; cursor: pointer; min-width: 280px; letter-spacing: 1px; transition: transform 0.1s, filter 0.15s; touch-action: manipulation; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
   .action-btn:active { transform: scale(0.97); }
@@ -455,6 +452,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
   #btn-not-nude:hover:not(:disabled) { filter: brightness(1.15); }
   #btn-nude { background: #2d7d46; color: #fff; }
   #btn-nude:hover:not(:disabled) { filter: brightness(1.15); }
+  
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
   .modal-bg.open { display: flex; }
   .modal { background: #1e1e1e; border: 1px solid #444; border-radius: 12px; padding: 22px; width: 640px; max-width: 100%; max-height: 90vh; overflow-y: auto; }
@@ -468,9 +466,11 @@ HTML_PAGE = r'''<!DOCTYPE html>
   .modal .actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 18px; }
   .modal .primary { background: #2d7d46; border-color: #2d7d46; color: #fff; }
   .modal .primary:hover { background: #369b56; }
+  
   #toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); background: rgba(40,40,40,0.96); border: 1px solid #555; color: #eee; padding: 10px 20px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity 0.2s; pointer-events: none; z-index: 200; max-width: 80vw; text-align: center; }
   #toast.show { opacity: 1; }
   #toast.error { border-color: #a83a3a; }
+  
   @media (max-width: 900px) {
     header { padding: 6px 8px; gap: 6px; }
     header .title { font-size: 13px; }
@@ -556,6 +556,7 @@ let currentIndex = 0;
 let settings = { source: '', not_nude: '', nude: '' };
 let brightness = 1.0;
 const $ = (id) => document.getElementById(id);
+
 async function loadState() {
   const r = await fetch('/api/state');
   const data = await r.json();
@@ -568,12 +569,14 @@ async function loadState() {
   updateUndoButton(data.undo_count || 0);
   render();
 }
+
 function updateUndoButton(count) {
   const btn = $('btn-undo');
   btn.textContent = '↶ (' + count + ')';
   btn.disabled = count === 0;
   btn.title = count > 0 ? 'Undo last move (' + count + ' available)' : 'Nothing to undo';
 }
+
 function render() {
   const img = $('photo'); const ph = $('photo-placeholder'); const counter = $('counter'); const btnNN = $('btn-not-nude'); const btnN = $('btn-nude');
   if (images.length === 0) {
@@ -589,19 +592,23 @@ function render() {
   counter.textContent = (currentIndex + 1) + ' / ' + images.length + ' — ' + name; counter.title = name;
   btnNN.disabled = false; btnN.disabled = false; applyBrightness();
 }
+
 function applyBrightness() {
   const img = $('photo'); if (!img) return;
   img.style.filter = (brightness === 1.0) ? '' : 'brightness(' + brightness.toFixed(2) + ')';
   $('brightness-value').textContent = brightness.toFixed(2);
 }
+
 function changeBrightness(delta) {
   if (images.length === 0) return;
   brightness = Math.max(0.1, Math.min(3.0, brightness + delta));
   applyBrightness();
 }
+
 function resetBrightness() { brightness = 1.0; applyBrightness(); }
 function nextImage() { if (images.length === 0) return; currentIndex = (currentIndex + 1) % images.length; brightness = 1.0; render(); }
 function prevImage() { if (images.length === 0) return; currentIndex = (currentIndex - 1 + images.length) % images.length; brightness = 1.0; render(); }
+
 async function classify(category) {
   if (images.length === 0) return;
   if (!settings[category]) { toast('Select a folder in settings first', true); return; }
@@ -613,6 +620,7 @@ async function classify(category) {
   if (images.length === 0) currentIndex = 0; else if (currentIndex >= images.length) currentIndex = images.length - 1;
   brightness = 1.0; updateUndoButton(data.undo_count); render();
 }
+
 async function undoLast() {
   const r = await fetch('/api/undo', { method: 'POST' });
   const data = await r.json();
@@ -622,6 +630,7 @@ async function undoLast() {
   if (currentIndex >= images.length) currentIndex = Math.max(0, images.length - 1);
   brightness = 1.0; render();
 }
+
 async function deleteImage() {
   if (images.length === 0) return;
   if (!confirm('Delete file permanently?\n\n' + images[currentIndex])) return;
@@ -633,6 +642,7 @@ async function deleteImage() {
   if (currentIndex >= images.length) currentIndex = Math.max(0, images.length - 1);
   brightness = 1.0; updateUndoButton(data.undo_count); render();
 }
+
 async function pickFolder(key) {
   const titles = { 'source': 'Select photo folder', 'not_nude': 'Select folder for "Not Nude"', 'nude': 'Select folder for "Nude"' };
   toast('Opening folder selection dialog...');
@@ -644,6 +654,7 @@ async function pickFolder(key) {
     else $('nude-folder').value = data.path;
   }
 }
+
 async function saveSettings() {
   const body = { source: $('source-folder').value, not_nude: $('not-nude-folder').value, nude: $('nude-folder').value };
   const r = await fetch('/api/save-settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
@@ -652,6 +663,7 @@ async function saveSettings() {
   settings = body; images = data.images; currentIndex = 0; brightness = 1.0;
   updateUndoButton(data.undo_count); render(); closeSettings(); toast('Settings saved');
 }
+
 async function restartServer() {
   try {
     const r = await fetch('/api/restart', { method: 'POST' });
@@ -662,18 +674,22 @@ async function restartServer() {
     updateUndoButton(data.undo_count || 0); render(); closeSettings(); toast('Server restarted');
   } catch (e) { toast('Error: ' + e.message, true); }
 }
+
 function openSettings() { $('settings-modal').classList.add('open'); }
 function closeSettings() { $('settings-modal').classList.remove('open'); }
+
 async function quitApp() {
   if (!confirm('Close application?')) return;
   try { await fetch('/api/quit', { method: 'POST' }); } catch (e) {}
   document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#666;font-family:sans-serif;">Application closed. You can close the tab.</div>';
 }
+
 let toastTimer = null;
 function toast(msg, isError) {
   const el = $('toast'); el.textContent = msg; el.classList.toggle('error', !!isError); el.classList.add('show');
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
 }
+
 (function setupSwipe() {
   const main = $('main'); let startX = 0, startY = 0, tracking = false;
   main.addEventListener('touchstart', (e) => {
@@ -688,9 +704,11 @@ function toast(msg, isError) {
     if (dx < 0) nextImage(); else prevImage();
   }, { passive: true });
 })();
+
 $('btn-settings').onclick = openSettings; $('btn-quit').onclick = quitApp; $('btn-back').onclick = prevImage; $('btn-undo').onclick = undoLast;
 $('prev').onclick = prevImage; $('next').onclick = nextImage; $('b-up').onclick = () => changeBrightness(+0.1); $('b-down').onclick = () => changeBrightness(-0.1);
 $('b-reset').onclick = resetBrightness; $('btn-not-nude').onclick = () => classify('not_nude'); $('btn-nude').onclick = () => classify('nude');
+
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (e.key === 'ArrowRight') { nextImage(); e.preventDefault(); }
@@ -703,6 +721,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'r' || e.key === 'R') { resetBrightness(); }
   else if (e.key === 'Escape') { closeSettings(); }
 });
+
 loadState();
 </script>
 </body>
