@@ -148,7 +148,7 @@ def get_local_ips():
         s.connect(('8.8.8.8', 80))
         ip = s.getsockname()[0]
         s.close()
-        if ip not in ips and not ip.startswith('127.') and ip != '0.0.0.0':
+        if ip not in ips and not ip.startswith('127.0.0.0') and ip != '0.0.0.0':
             ips.append(ip)
     except Exception: pass
     return ips
@@ -258,7 +258,7 @@ def show_update_indicator(latest_version, download_url):
         
         tk_root.update_idletasks()
         req_h = tk_root.winfo_reqheight()
-        tk_root.geometry(f"800x550")
+        tk_root.geometry(f"800x{req_h + 50}")
 
 def trigger_update():
     global pending_update_url
@@ -578,7 +578,7 @@ def main():
 
     tk_root = tk.Tk()
     tk_root.title('PhotoClassifier')
-    tk_root.geometry('800x550')
+    tk_root.geometry('800x420') # Уменьшили высоту для компактности
     tk_root.configure(bg='#18181b')
 
     try:
@@ -627,23 +627,16 @@ def main():
     main_content = tk.Frame(tk_root, bg='#18181b')
     main_content.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-    # Верхняя панель
-    top_bar = tk.Frame(main_content, bg='#141417', height=60)
-    top_bar.pack(fill=tk.X, side=tk.TOP)
-    top_bar.pack_propagate(False)
-
-    tk.Label(top_bar, text='Photos', bg='#141417', fg='white', font=('Segoe UI', 12)).pack(side=tk.LEFT, padx=20)
-
     # Заголовок и счетчик
     status_label = tk.Label(main_content, text='Application is running.', bg='#18181b', fg='white', font=('Segoe UI', 18, 'bold'))
     status_label.pack(anchor='w', padx=24, pady=(24, 5))
 
     counter_label = tk.Label(main_content, text='Remaining photos: 0', bg='#18181b', fg='#a1a1aa', font=('Segoe UI', 12))
-    counter_label.pack(anchor='w', padx=24, pady=(0, 20))
+    counter_label.pack(anchor='w', padx=24, pady=(0, 15))
 
     # Карточка с путями (стилизована под таблицу)
     table_frame = tk.Frame(main_content, bg='#141417', padx=20, pady=15)
-    table_frame.pack(fill=tk.X, padx=24, pady=10)
+    table_frame.pack(fill=tk.X, padx=24, pady=(0, 15))
 
     tk.Label(table_frame, text='Folder Paths:', bg='#141417', fg='#a1a1aa', font=('Segoe UI', 10, 'bold')).pack(anchor='w', pady=(0, 10))
     
@@ -657,17 +650,17 @@ def main():
     update_counter_ui()
 
     update_frame = tk.Frame(main_content, bg='#18181b')
-    update_frame.pack(padx=24, pady=(10, 0))
+    update_frame.pack(padx=24, pady=(0, 10))
     update_btn = create_dark_button(update_frame, '', trigger_update, is_primary=True)
     update_btn.config(bg="#22c55e", activebackground="#16a34a")
     update_btn.bind('<Enter>', lambda e: update_btn.config(bg='#16a34a'))
     update_btn.bind('<Leave>', lambda e: update_btn.config(bg='#22c55e'))
 
-    # Нижняя панель с кнопками
+    # Нижняя панель с кнопками (теперь прижата вплотную к таблице, без пустоты)
     bottom_bar = tk.Frame(main_content, bg='#18181b')
-    bottom_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=24, pady=24)
+    bottom_bar.pack(fill=tk.X, padx=24, pady=(10, 20))
 
-    btn_check = tk.Button(bottom_bar, text='🔍 Check for Updates', command=force_check_update, bg='#27272a', fg='white', relief='flat', padx=20, pady=10, font=('Segoe UI', 10), cursor='hand2')
+    btn_check = tk.Button(bottom_bar, text='Check for Updates', command=force_check_update, bg='#27272a', fg='white', relief='flat', padx=20, pady=10, font=('Segoe UI', 10), cursor='hand2')
     btn_check.pack(side=tk.LEFT, padx=(0, 10))
 
     def reload_server_ui():
