@@ -17,6 +17,7 @@ import tkinter as tk
 import zipfile
 import time
 import io
+import hashlib
 from tkinter import filedialog, messagebox
 from pathlib import Path
 from collections import deque
@@ -29,7 +30,7 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.6.2"
+CURRENT_VERSION = "1.7.0"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 INSTALL_DIR = r"C:\!PV" 
@@ -144,7 +145,6 @@ def check_for_updates():
         data = r.json()
         
         latest_version = data.get('tag_name', '').lstrip('v')
-        release_url = data.get('html_url', '')
         
         if latest_version and latest_version != CURRENT_VERSION and latest_version != ignored_version:
             download_url = None
@@ -170,7 +170,6 @@ def show_update_indicator(latest_version, download_url):
     pending_update_url = download_url
     if update_btn:
         update_btn.config(text=f"⬇ Update to v{latest_version}", bg="#2d7d46")
-        # Показываем кнопку обновления под версией
         update_btn.pack(pady=(5, 5), before=tk_root.winfo_children()[2])
         if status_label:
             status_label.config(text="Update Available!", fg="#ff3b5c")
@@ -298,6 +297,8 @@ def api_save_settings():
     with moves_lock: undo_count = len(moves)
     return jsonify({'ok': True, 'images': state['images'], 'undo_count': undo_count})
 
+# ----------------------- Caching & Info Routes -----------------------
+
 @app.route('/api/image')
 def api_image():
     name = request.args.get('name', '')
@@ -308,19 +309,42 @@ def api_image():
     if not os.path.isfile(path): return 'not found', 404
     
     if thumb:
+        cache_dir = os.path.join(state['source'], '.cache')
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        # Хэшируем полный путь к файлу для уникального имени кэша
+        h = hashlib.md5(path.encode('utf-8')).hexdigest()
+        cache_path = os.path.join(cache_dir, h + ".jpg")
+        
+        if os.path.exists(cache_path):
+            return send_file(cache_path, mimetype='image/jpeg')
+            
         try:
             img = Image.open(path)
             img.thumbnail((1920, 1080), Image.LANCZOS)
             if img.mode not in ("RGB", "L"):
                 img = img.convert("RGB")
-            buf = io.BytesIO()
-            img.save(buf, format='JPEG', quality=85)
-            buf.seek(0)
-            return send_file(buf, mimetype='image/jpeg')
+            img.save(cache_path, format='JPEG', quality=85)
+            return send_file(cache_path, mimetype='image/jpeg')
         except Exception:
-            pass
+            return send_file(path) # Если не удалось сжать, отдаем оригинал
             
     return send_file(path)
+
+@app.route('/api/info')
+def api_info():
+    name = request.args.get('name', '')
+    if not is_safe_name(name) or not state['source']: return jsonify({'ok': False})
+    path = os.path.join(state['source'], name)
+    if not os.path.isfile(path): return jsonify({'ok': False})
+    
+    size_mb = os.path.getsize(path) / (1024 * 1024)
+    try:
+        with Image.open(path) as img:
+            w, h = img.size
+        return jsonify({'ok': True, 'size': f"{size_mb:.1f} MB", 'res': f"{w}x{h}"})
+    except Exception:
+        return jsonify({'ok': True, 'size': f"{size_mb:.1f} MB", 'res': "?"})
 
 @app.route('/api/classify', methods=['POST'])
 def api_classify():
@@ -457,7 +481,6 @@ def main():
 
     tk_root = tk.Tk()
     tk_root.title('PhotoClassifier')
-    # Устанавливаем только ширину, высота подстроится сама под контент + отступы
     tk_root.geometry('420x')
     tk_root.resizable(False, False)
     tk_root.configure(bg='#141418')
@@ -467,7 +490,6 @@ def main():
         tk_root.iconphoto(True, icon_img)
     except Exception: pass
 
-    # Верхний отступ ровно 10px
     status_label = tk.Label(tk_root, text='Application is running.', bg='#141418', fg='#ffffff', font=('Segoe UI', 12, 'bold'))
     status_label.pack(pady=(10, 2))
     
@@ -486,7 +508,6 @@ def main():
             tk.Label(urls_frame, text=f'http://{ip}:{port}', bg='#1e1e24', fg='#ff3b5c', font=('Consolas', 11)).pack(anchor='w')
 
     btn_frame = tk.Frame(tk_root, bg='#141418')
-    # Нижний отступ ровно 10px
     btn_frame.pack(pady=(5, 10))
 
     create_dark_button(btn_frame, 'Open in browser', lambda: webbrowser.open(local_url), is_primary=True).pack(side=tk.LEFT, padx=5)
@@ -651,21 +672,21 @@ HTML_PAGE = r'''<!DOCTYPE html>
       <div class="field">
         <label>Photo folder (source)</label>
         <div class="row">
-          <input type="text" id="source-folder" readonly placeholder="Not selected">
+          <input type="text" id="source-folder" placeholder="Type path or Browse...">
           <button onclick="pickFolder('source')">Browse...</button>
         </div>
       </div>
       <div class="field">
         <label>Save Button 1 photos to</label>
         <div class="row">
-          <input type="text" id="not-nude-folder" readonly placeholder="Not selected">
+          <input type="text" id="not-nude-folder" placeholder="Type path or Browse...">
           <button onclick="pickFolder('not_nude')">Browse...</button>
         </div>
       </div>
       <div class="field">
         <label>Save Button 2 photos to</label>
         <div class="row">
-          <input type="text" id="nude-folder" readonly placeholder="Not selected">
+          <input type="text" id="nude-folder" placeholder="Type path or Browse...">
           <button onclick="pickFolder('nude')">Browse...</button>
         </div>
       </div>
@@ -728,7 +749,7 @@ function updateUndoButton(count) {
   btn.title = count > 0 ? 'Undo last move (' + count + ' available)' : 'Nothing to undo';
 }
 
-function render() {
+async function render() {
   const img = $('photo'); const ph = $('photo-placeholder'); const counter = $('counter'); const btnNN = $('btn-not-nude'); const btnN = $('btn-nude');
   const progressBar = $('progress-bar');
   
@@ -747,10 +768,15 @@ function render() {
   
   const name = images[currentIndex];
   
+  // Загружаем через эндпоинт с параметром thumb=1 (сжатие/кэш)
   img.src = '/api/image?name=' + encodeURIComponent(name) + '&thumb=1&t=' + Date.now();
   
   img.style.display = 'block'; ph.style.display = 'none';
-  counter.textContent = (currentIndex + 1) + ' / ' + images.length + ' — ' + name; counter.title = name;
+  
+  // Базовый текст
+  counter.textContent = (currentIndex + 1) + ' / ' + images.length + ' — ' + name;
+  counter.title = name;
+  
   btnNN.disabled = false; btnN.disabled = false; applyBrightness();
   
   const progressPercent = ((currentIndex + 1) / images.length) * 100;
@@ -758,12 +784,23 @@ function render() {
 
   localStorage.setItem('lastPhotoIndex', currentIndex);
 
+  // ПРЕДЗАГРУЗКА следующего фото
   if (images.length > 1) {
       const nextIndex = (currentIndex + 1) % images.length;
       const nextName = images[nextIndex];
       const preloadImg = new Image();
       preloadImg.src = '/api/image?name=' + encodeURIComponent(nextName) + '&thumb=1';
   }
+
+  // НОВОЕ: Асинхронно запрашиваем разрешение и вес файла
+  try {
+      const infoRes = await fetch('/api/info?name=' + encodeURIComponent(name));
+      const infoData = await infoRes.json();
+      if (infoData.ok) {
+          // Добавляем инфу в конец строки
+          counter.textContent += ` [${infoData.res}, ${infoData.size}]`;
+      }
+  } catch(e) {}
 }
 
 function applyBrightness() {
