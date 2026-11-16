@@ -13,10 +13,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5  # Обновлено с v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6  # Обновлено с v5
         with:
           python-version: '3.12'
 
@@ -31,7 +31,7 @@ jobs:
           pyinstaller --onefile --windowed --name PhotoClassifier --icon=img/8080.png --add-data "img;img" main.py
 
       - name: Upload Release Asset
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3  # Обновлено с v2
         with:
           files: dist/PhotoClassifier.exe
         env:
