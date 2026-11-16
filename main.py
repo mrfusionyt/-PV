@@ -58,6 +58,9 @@ dialog_res = queue.Queue()
 tk_root = None
 status_label = None
 counter_label = None
+src_label = None
+nn_label = None
+n_label = None
 update_btn = None
 pending_update_url = None
 quit_requested = threading.Event()
@@ -113,6 +116,12 @@ def update_counter_ui():
     if counter_label:
         count = len(state['images'])
         counter_label.config(text=f"Remaining photos: {count}")
+    if src_label:
+        src_label.config(text=f"Source: {state['source'] or 'Not set'}")
+    if nn_label:
+        nn_label.config(text=f"{state['labels']['not_nude']}: {state['targets']['not_nude'] or 'Not set'}")
+    if n_label:
+        n_label.config(text=f"{state['labels']['nude']}: {state['targets']['nude'] or 'Not set'}")
 
 def refresh_source_and_ui():
     scan_source()
@@ -143,6 +152,17 @@ def get_local_ips():
             ips.append(ip)
     except Exception: pass
     return ips
+
+def tk_undo_action():
+    try:
+        r = requests.post(f'{local_url_global}/api/undo')
+        if r.ok:
+            data = r.json()
+            if data.get('ok'):
+                load_config()
+                scan_source()
+                update_counter_ui()
+    except: pass
 
 # ----------------------- Tray Icon Logic -----------------------
 
@@ -178,8 +198,6 @@ def create_tray():
 def check_for_updates(manual=False):
     global ignored_version
     if GITHUB_USER == "YOUR_NICKNAME" or GITHUB_REPO == "YOUR_REPO":
-        if manual and tk_root:
-            tk_root.after(0, lambda: messagebox.showinfo("Updates", "Auto-update is not configured.", parent=tk_root))
         return False
 
     try:
@@ -197,37 +215,28 @@ def check_for_updates(manual=False):
                     download_url = asset['browser_download_url']
                     break
             
-            if not download_url:
-                if manual and tk_root:
-                    tk_root.after(0, lambda: messagebox.showerror("Update Error", f"Version {latest_version} found, but no .zip file attached to the release on GitHub.\n\nCheck if GitHub Actions finished successfully.", parent=tk_root))
-                return False
-                
-            if tk_root:
+            if tk_root and download_url:
                 tk_root.after(0, lambda: show_update_indicator(latest_version, download_url))
             return True
-        else:
-            if manual and tk_root:
-                tk_root.after(0, lambda: messagebox.showinfo("Updates", "You are already using the latest version.", parent=tk_root))
-            return False
+        return False
     except Exception as e:
-        if manual and tk_root:
-            tk_root.after(0, lambda: messagebox.showerror("Update Error", f"Failed to check updates:\n{e}", parent=tk_root))
         print(f"Update check error: {e}")
         return False
 
 def force_check_update():
     def do_check():
-        global ignored_version, pending_update_url
-        ignored_version = None 
-        pending_update_url = None
-        
         if status_label:
             tk_root.after(0, lambda: status_label.config(text="Checking...", fg="#ffffff"))
         
-        check_for_updates(manual=True)
+        global ignored_version
+        ignored_version = None 
         
-        if status_label and not pending_update_url:
-            tk_root.after(0, lambda: status_label.config(text="Application is running.", fg="#ffffff"))
+        found = check_for_updates(manual=True)
+        
+        if not found and tk_root:
+            tk_root.after(0, lambda: messagebox.showinfo("Updates", "You are already using the latest version.", parent=tk_root))
+            if status_label:
+                tk_root.after(0, lambda: status_label.config(text="Application is running.", fg="#ffffff"))
     
     threading.Thread(target=do_check, daemon=True).start()
 
@@ -249,7 +258,7 @@ def show_update_indicator(latest_version, download_url):
         
         tk_root.update_idletasks()
         req_h = tk_root.winfo_reqheight()
-        tk_root.geometry(f"460x{req_h}")
+        tk_root.geometry(f"800x550")
 
 def trigger_update():
     global pending_update_url
@@ -540,20 +549,20 @@ def find_free_port(start=5123, end=5223):
     raise RuntimeError('Could not find a free port')
 
 def create_dark_button(parent, text, command, is_primary=False):
-    bg = '#ff3b5c' if is_primary else '#2a2a2a'
+    bg = '#ef4444' if is_primary else '#27272a'
     fg = '#ffffff'
-    active_bg = '#e63946' if is_primary else '#3a3a3a'
+    active_bg = '#dc2626' if is_primary else '#3f3f46'
     btn = tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground=active_bg, activeforeground=fg, font=('Segoe UI', 10, 'bold' if is_primary else 'normal'), relief='flat', bd=0, padx=20, pady=8, cursor='hand2')
     if not is_primary:
-        btn.bind('<Enter>', lambda e: btn.config(bg='#3a3a3a'))
-        btn.bind('<Leave>', lambda e: btn.config(bg='#2a2a2a'))
+        btn.bind('<Enter>', lambda e: btn.config(bg='#3f3f46'))
+        btn.bind('<Leave>', lambda e: btn.config(bg='#27272a'))
     else:
-        btn.bind('<Enter>', lambda e: btn.config(bg='#e63946'))
-        btn.bind('<Leave>', lambda e: btn.config(bg='#ff3b5c'))
+        btn.bind('<Enter>', lambda e: btn.config(bg='#dc2626'))
+        btn.bind('<Leave>', lambda e: btn.config(bg='#ef4444'))
     return btn
 
 def main():
-    global tk_root, status_label, counter_label, update_btn, local_url_global
+    global tk_root, status_label, counter_label, src_label, nn_label, n_label, update_btn, local_url_global
 
     load_config()
     if len(sys.argv) > 1:
@@ -569,43 +578,97 @@ def main():
 
     tk_root = tk.Tk()
     tk_root.title('PhotoClassifier')
-    tk_root.resizable(False, False)
-    tk_root.configure(bg='#141418')
+    tk_root.geometry('800x550')
+    tk_root.configure(bg='#18181b')
 
     try:
         icon_img = tk.PhotoImage(file=resource_path('img/8080.png'))
         tk_root.iconphoto(True, icon_img)
     except Exception: pass
 
-    status_label = tk.Label(tk_root, text='Application is running.', bg='#141418', fg='#ffffff', font=('Segoe UI', 12, 'bold'))
-    status_label.pack(pady=(10, 2))
+    # === ЛЕВАЯ ПАНЕЛЬ (Sidebar) ===
+    sidebar = tk.Frame(tk_root, width=220, bg='#141417')
+    sidebar.pack(side=tk.LEFT, fill=tk.Y)
+    sidebar.pack_propagate(False)
+
+    # Профиль
+    profile_frame = tk.Frame(sidebar, bg='#27272a', pady=10, padx=10)
+    profile_frame.pack(fill=tk.X, padx=15, pady=(20, 30))
+    tk.Label(profile_frame, text='📷', bg='#27272a', fg='white', font=('Segoe UI', 16)).pack(side=tk.LEFT, padx=(0, 10))
+    profile_text = tk.Frame(profile_frame, bg='#27272a')
+    profile_text.pack(side=tk.LEFT)
+    tk.Label(profile_text, text='PROFILE', bg='#27272a', fg='#a1a1aa', font=('Segoe UI', 8)).pack(anchor='w')
+    tk.Label(profile_text, text='PhotoClassifier', bg='#27272a', fg='white', font=('Segoe UI', 11, 'bold')).pack(anchor='w')
+
+    # Настройки
+    tk.Label(sidebar, text='SETTINGS', bg='#141417', fg='#a1a1aa', font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=20, pady=(0, 10))
+    btn_libs = tk.Button(sidebar, text='📁 Libraries', bg='#ef4444', fg='white', relief='flat', anchor='w', padx=20, pady=8, font=('Segoe UI', 10, 'bold'), cursor='hand2')
+    btn_libs.pack(fill=tk.X, pady=2)
+
+    # Инструменты
+    tk.Label(sidebar, text='TOOLS', bg='#141417', fg='#a1a1aa', font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=20, pady=(20, 10))
     
-    tk.Label(tk_root, text=f'Version {CURRENT_VERSION}', bg='#141418', fg='#666666', font=('Segoe UI', 9)).pack()
+    btn_undo = tk.Button(sidebar, text='↶ Undo Action', bg='#141417', fg='#a1a1aa', relief='flat', anchor='w', padx=20, pady=6, font=('Segoe UI', 10), cursor='hand2', command=tk_undo_action)
+    btn_undo.pack(fill=tk.X)
+    btn_undo.bind('<Enter>', lambda e: btn_undo.config(fg='white', bg='#27272a'))
+    btn_undo.bind('<Leave>', lambda e: btn_undo.config(fg='#a1a1aa', bg='#141417'))
+
+    btn_full = tk.Button(sidebar, text='⛶ Fullscreen', bg='#141417', fg='#a1a1aa', relief='flat', anchor='w', padx=20, pady=6, font=('Segoe UI', 10), cursor='hand2', command=lambda: webbrowser.open(local_url_global))
+    btn_full.pack(fill=tk.X)
+    btn_full.bind('<Enter>', lambda e: btn_full.config(fg='white', bg='#27272a'))
+    btn_full.bind('<Leave>', lambda e: btn_full.config(fg='#a1a1aa', bg='#141417'))
+
+    btn_close = tk.Button(sidebar, text='✕ Close Application', bg='#141417', fg='#ef4444', relief='flat', anchor='w', padx=20, pady=6, font=('Segoe UI', 10), cursor='hand2', command=lambda: (tray_icon.stop(), quit_requested.set()))
+    btn_close.pack(fill=tk.X, pady=(20, 0))
+    btn_close.bind('<Enter>', lambda e: btn_close.config(fg='white', bg='#ef4444'))
+    btn_close.bind('<Leave>', lambda e: btn_close.config(fg='#ef4444', bg='#141417'))
+
+    # === ОСНОВНАЯ ЧАСТЬ ===
+    main_content = tk.Frame(tk_root, bg='#18181b')
+    main_content.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+    # Верхняя панель
+    top_bar = tk.Frame(main_content, bg='#141417', height=60)
+    top_bar.pack(fill=tk.X, side=tk.TOP)
+    top_bar.pack_propagate(False)
+
+    tk.Label(top_bar, text='Photos', bg='#141417', fg='white', font=('Segoe UI', 12)).pack(side=tk.LEFT, padx=20)
+
+    # Заголовок и счетчик
+    status_label = tk.Label(main_content, text='Application is running.', bg='#18181b', fg='white', font=('Segoe UI', 18, 'bold'))
+    status_label.pack(anchor='w', padx=24, pady=(24, 5))
+
+    counter_label = tk.Label(main_content, text='Remaining photos: 0', bg='#18181b', fg='#a1a1aa', font=('Segoe UI', 12))
+    counter_label.pack(anchor='w', padx=24, pady=(0, 20))
+
+    # Карточка с путями (стилизована под таблицу)
+    table_frame = tk.Frame(main_content, bg='#141417', padx=20, pady=15)
+    table_frame.pack(fill=tk.X, padx=24, pady=10)
+
+    tk.Label(table_frame, text='Folder Paths:', bg='#141417', fg='#a1a1aa', font=('Segoe UI', 10, 'bold')).pack(anchor='w', pady=(0, 10))
     
-    counter_label = tk.Label(tk_root, text="Remaining photos: 0", bg='#141418', fg='#aaaaaa', font=('Segoe UI', 10))
-    counter_label.pack(pady=(5, 2))
+    src_label = tk.Label(table_frame, text='Source: ...', bg='#141417', fg='#a1a1aa', font=('Consolas', 10))
+    src_label.pack(anchor='w', pady=2)
+    nn_label = tk.Label(table_frame, text='Not Nude: ...', bg='#141417', fg='#a1a1aa', font=('Consolas', 10))
+    nn_label.pack(anchor='w', pady=2)
+    n_label = tk.Label(table_frame, text='Nude: ...', bg='#141417', fg='#a1a1aa', font=('Consolas', 10))
+    n_label.pack(anchor='w', pady=2)
+    
     update_counter_ui()
 
-    check_upd_btn = tk.Button(tk_root, text="🔍 Check for Updates", command=force_check_update, bg='#2a2a2a', fg='#ffffff', relief='flat', font=('Segoe UI', 8), cursor='hand2')
-    check_upd_btn.pack(pady=(0, 5))
-
-    update_frame = tk.Frame(tk_root, bg='#141418')
-    update_frame.pack()
-
+    update_frame = tk.Frame(main_content, bg='#18181b')
+    update_frame.pack(padx=24, pady=(10, 0))
     update_btn = create_dark_button(update_frame, '', trigger_update, is_primary=True)
-    update_btn.config(bg="#2d7d46", activebackground="#369b56")
-    update_btn.bind('<Enter>', lambda e: update_btn.config(bg='#369b56'))
-    update_btn.bind('<Leave>', lambda e: update_btn.config(bg='#2d7d46'))
+    update_btn.config(bg="#22c55e", activebackground="#16a34a")
+    update_btn.bind('<Enter>', lambda e: update_btn.config(bg='#16a34a'))
+    update_btn.bind('<Leave>', lambda e: update_btn.config(bg='#22c55e'))
 
-    if lan_ips:
-        tk.Label(tk_root, text='From local network / VPN:', bg='#141418', fg='#888888', font=('Segoe UI', 9)).pack(pady=(10, 0))
-        urls_frame = tk.Frame(tk_root, bg='#1e1e24', padx=15, pady=10)
-        urls_frame.pack(pady=(5, 10), fill='x', padx=40)
-        for ip in lan_ips:
-            tk.Label(urls_frame, text=f'http://{ip}:{port}', bg='#1e1e24', fg='#ff3b5c', font=('Consolas', 11)).pack(anchor='w')
+    # Нижняя панель с кнопками
+    bottom_bar = tk.Frame(main_content, bg='#18181b')
+    bottom_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=24, pady=24)
 
-    btn_frame = tk.Frame(tk_root, bg='#141418')
-    btn_frame.pack(pady=(5, 10))
+    btn_check = tk.Button(bottom_bar, text='🔍 Check for Updates', command=force_check_update, bg='#27272a', fg='white', relief='flat', padx=20, pady=10, font=('Segoe UI', 10), cursor='hand2')
+    btn_check.pack(side=tk.LEFT, padx=(0, 10))
 
     def reload_server_ui():
         load_config()
@@ -613,14 +676,11 @@ def main():
         update_counter_ui()
         messagebox.showinfo("Info", "Server restarted / Folder reloaded", parent=tk_root)
 
-    create_dark_button(btn_frame, 'Restart', reload_server_ui).pack(side=tk.LEFT, padx=5)
-    create_dark_button(btn_frame, 'Open', lambda: webbrowser.open(local_url), is_primary=True).pack(side=tk.LEFT, padx=5)
-    create_dark_button(btn_frame, 'Hide', hide_window).pack(side=tk.LEFT, padx=5)
-    create_dark_button(btn_frame, 'Exit', lambda: (tray_icon.stop(), quit_requested.set())).pack(side=tk.LEFT, padx=5)
+    btn_restart = tk.Button(bottom_bar, text='Restart Server', bg='#27272a', fg='white', relief='flat', padx=20, pady=10, font=('Segoe UI', 10), cursor='hand2', command=reload_server_ui)
+    btn_restart.pack(side=tk.LEFT, padx=(0, 10))
 
-    tk_root.update_idletasks()
-    req_h = tk_root.winfo_reqheight()
-    tk_root.geometry(f"460x{req_h}")
+    btn_open = tk.Button(bottom_bar, text='Open in Browser', bg='#ef4444', fg='white', relief='flat', padx=20, pady=10, font=('Segoe UI', 10, 'bold'), cursor='hand2', command=lambda: webbrowser.open(local_url_global))
+    btn_open.pack(side=tk.LEFT)
 
     tk_root.protocol('WM_DELETE_WINDOW', hide_window)
 
@@ -657,398 +717,181 @@ HTML_PAGE = r'''<!DOCTYPE html>
 <title>PhotoClassifier</title>
 <link rel="icon" type="image/png" href="/favicon.ico">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
-  :root {
-    --bg-app: #18181b;
-    --bg-sidebar: #141417;
-    --bg-surface: #27272a;
-    --bg-surface-hover: #3f3f46;
-    --text-main: #f4f4f5;
-    --text-muted: #a1a1aa;
-    --accent: #ef4444;
-    --accent-hover: #dc2626;
-    --border: #27272a;
-    --green: #22c55e;
-    --green-hover: #16a34a;
-  }
-
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; overflow: hidden; font-family: 'Inter', -apple-system, sans-serif; background: var(--bg-app); color: var(--text-main); }
+  html, body { height: 100%; overflow: hidden; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
+  body { background: #111; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
   
-  .app-container { display: flex; height: 100vh; width: 100vw; }
+  #progress-container { position: absolute; top: 0; left: 0; width: 100%; height: 3px; background: #333; z-index: 10; }
+  #progress-bar { height: 100%; background: #2d7d46; width: 0%; transition: width 0.3s ease; }
 
-  /* --- SIDEBAR --- */
-  .sidebar {
-    width: 260px;
-    background: var(--bg-sidebar);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    padding: 20px 0;
-    flex-shrink: 0;
-  }
-  .profile-card {
-    margin: 0 15px 30px 15px;
-    padding: 12px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    cursor: pointer;
-  }
-  .profile-card:hover { background: var(--bg-surface-hover); }
-  .avatar {
-    width: 36px; height: 36px; border-radius: 50%;
-    background: var(--accent);
-    display: flex; align-items: center; justify-content: center;
-    font-weight: bold; color: white;
-  }
-  .profile-info { font-size: 13px; }
-  .profile-info b { display: block; font-size: 15px; color: var(--text-main); }
-  .profile-info span { color: var(--text-muted); }
-
-  .nav-section { margin-bottom: 20px; }
-  .nav-section h3 {
-    font-size: 12px; text-transform: uppercase; color: var(--text-muted);
-    margin: 0 25px 10px 25px; font-weight: 600; letter-spacing: 0.5px;
-  }
-  .nav-list { list-style: none; }
-  .nav-list li {
-    padding: 10px 25px;
-    font-size: 14px;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.2s;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .nav-list li:hover { color: var(--text-main); background: rgba(255,255,255,0.03); }
-  .nav-list li.active { background: var(--accent); color: white; font-weight: 500; }
-  .nav-list li.active:hover { background: var(--accent-hover); }
-  .nav-list li.danger { color: var(--accent); }
-  .nav-list li.danger:hover { color: white; background: var(--accent); }
-
-  /* --- MAIN CONTENT --- */
-  .main-content {
-    flex-grow: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-
-  /* --- TOP NAV --- */
-  .top-nav {
-    height: 60px;
-    background: var(--bg-sidebar);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 24px;
-    flex-shrink: 0;
-  }
-  .nav-tabs { display: flex; gap: 24px; height: 100%; }
-  .nav-tab {
-    height: 100%;
-    display: flex;
-    align-items: center;
-    color: var(--text-muted);
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    position: relative;
-  }
-  .nav-tab.active { color: var(--text-main); }
-  .nav-tab.active::after {
-    content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: var(--accent);
+  header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1a1a1a; border-bottom: 1px solid #333; flex-wrap: wrap; position: relative; z-index: 5; }
+  header .title { font-weight: 600; font-size: 14px; }
+  header .spacer { flex: 1; }
+  header button { background: #2a2a2a; color: #eee; border: 1px solid #444; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; touch-action: manipulation; white-space: nowrap; }
+  header button:hover { background: #3a3a3a; }
+  header button:disabled { opacity: 0.35; cursor: not-allowed; }
+  
+  #main { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; padding: 6px; touch-action: none; min-height: 0; }
+  #img-container { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  
+  #photo { max-width: 100%; max-height: 100%; object-fit: contain; display: none; user-select: none; -webkit-user-drag: none; transition: filter 0.1s linear; will-change: filter, transform; transform-origin: center center; }
+  
+  #photo-placeholder { color: #666; font-size: 16px; text-align: center; padding: 30px; }
+  
+  .nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.35); color: #fff; border: none; width: 70px; height: 130px; font-size: 40px; cursor: pointer; opacity: 0.65; transition: opacity 0.15s, background 0.15s; user-select: none; touch-action: manipulation; display: flex; align-items: center; justify-content: center; z-index: 10; }
+  .nav:hover { opacity: 1; background: rgba(0,0,0,0.6); }
+  .nav:active { background: rgba(0,0,0,0.8); }
+  #prev { left: 0; border-radius: 0 10px 10px 0; }
+  #next { right: 0; border-radius: 10px 0 0 10px; }
+  
+  #toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #1a1a1a; border-top: 1px solid #333; justify-content: center; flex-wrap: wrap; z-index: 5; position: relative; }
+  #toolbar button { background: #2a2a2a; color: #eee; border: 1px solid #444; width: 48px; height: 48px; border-radius: 8px; cursor: pointer; font-size: 22px; font-weight: 600; touch-action: manipulation; display: flex; align-items: center; justify-content: center; }
+  #toolbar button:hover { background: #3a3a3a; }
+  #toolbar button:active { background: #4a4a4a; }
+  #brightness-value { font-family: Consolas, monospace; color: #ccc; font-size: 16px; min-width: 60px; text-align: center; }
+  
+  #counter { 
+    margin-left: auto; 
+    font-size: 18px; 
+    color: #ddd; 
+    font-family: Consolas, monospace; 
+    padding-left: 12px; 
+    white-space: nowrap; 
   }
   
-  .top-actions { display: flex; align-items: center; gap: 12px; }
-  .top-actions span { font-family: monospace; font-size: 15px; color: var(--text-muted); }
+  footer { display: flex; gap: 20px; padding: 16px 24px; justify-content: center; background: #1a1a1a; border-top: 1px solid #333; flex-wrap: wrap; z-index: 5; position: relative; }
+  .action-btn { padding: 42px 96px; font-size: 48px; font-weight: 700; border: none; border-radius: 14px; cursor: pointer; min-width: 280px; letter-spacing: 1px; transition: transform 0.1s, filter 0.15s; touch-action: manipulation; box-shadow: 0 4px 12px rgba(0,0,0,0.4); word-break: break-word; }
+  .action-btn:active { transform: scale(0.97); }
+  .action-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  #btn-not-nude { background: #a83a3a; color: #fff; }
+  #btn-not-nude:hover:not(:disabled) { filter: brightness(1.15); }
+  #btn-nude { background: #2d7d46; color: #fff; }
+  #btn-nude:hover:not(:disabled) { filter: brightness(1.15); }
   
-  .btn {
-    background: var(--bg-surface);
-    color: var(--text-main);
-    border: 1px solid var(--border);
-    padding: 8px 16px; border-radius: 6px;
-    font-size: 13px; font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    display: inline-flex; align-items: center; justify-content: center;
-  }
-  .btn:hover { background: var(--bg-surface-hover); }
-  .btn-primary { background: var(--accent); border-color: var(--accent); color: white; }
-  .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-  .btn-icon { padding: 8px 10px; font-size: 16px; }
-
-  /* --- WORKSPACE --- */
-  .workspace {
-    flex-grow: 1;
-    display: flex;
-    flex-direction: column;
-    padding: 16px 24px;
-    min-height: 0;
-  }
-
-  .viewer-panel {
-    flex-grow: 1;
-    background: #000;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    margin-bottom: 16px;
-  }
-
-  #photo {
-    max-width: 100%; max-height: 100%; object-fit: contain;
-    display: none; user-select: none; -webkit-user-drag: none;
-    transition: filter 0.1s linear; will-change: filter, transform;
-    transform-origin: center center;
-  }
-  #photo-placeholder { color: var(--text-muted); font-size: 16px; text-align: center; }
-
-  .nav {
-    position: absolute; top: 50%; transform: translateY(-50%);
-    background: rgba(0,0,0,0.5); color: white; border: 1px solid rgba(255,255,255,0.1);
-    width: 60px; height: 120px; font-size: 36px; border-radius: 8px;
-    cursor: pointer; opacity: 0.7; transition: all 0.2s;
-    display: flex; align-items: center; justify-content: center; z-index: 10;
-  }
-  .nav:hover { opacity: 1; background: rgba(0,0,0,0.8); }
-  #prev { left: 16px; }
-  #next { right: 16px; }
-
-  .toolbar {
-    display: flex; align-items: center; gap: 12px;
-    background: var(--bg-sidebar); border: 1px solid var(--border);
-    padding: 12px 16px; border-radius: 8px;
-  }
-  .toolbar button {
-    background: var(--bg-surface); border: 1px solid var(--border);
-    color: var(--text-main); width: 40px; height: 40px; border-radius: 6px;
-    font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;
-  }
-  .toolbar button:hover { background: var(--bg-surface-hover); }
-  #brightness-value { font-family: monospace; font-size: 15px; color: var(--text-muted); min-width: 50px; text-align: center; }
-
-  /* --- BOTTOM ACTION BUTTONS --- */
-  .action-bar {
-    display: flex; gap: 16px; margin-top: 16px;
-  }
-  .action-btn {
-    flex: 1;
-    padding: 24px;
-    font-size: 32px; font-weight: 700; letter-spacing: 1px;
-    border: none; border-radius: 8px;
-    cursor: pointer; color: white;
-    transition: transform 0.1s, filter 0.15s;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-  }
-  .action-btn:active { transform: scale(0.98); }
-  .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  #btn-not-nude { background: var(--accent); }
-  #btn-not-nude:hover:not(:disabled) { background: var(--accent-hover); }
-  #btn-nude { background: var(--green); }
-  #btn-nude:hover:not(:disabled) { background: var(--green-hover); }
-
-  /* --- MODAL (Settings) --- */
-  .modal-bg {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px);
-    display: none; align-items: center; justify-content: center; z-index: 100; padding: 16px;
-  }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
   .modal-bg.open { display: flex; }
-  .modal {
-    background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 12px;
-    padding: 24px; width: 800px; max-width: 100%; max-height: 90vh; overflow-y: auto;
-    box-shadow: 0 20px 40px rgba(0,0,0,0.5);
-  }
-  .modal h2 { font-size: 20px; font-weight: 600; margin-bottom: 20px; }
+  .modal { background: #1e1e1e; border: 1px solid #444; border-radius: 12px; padding: 22px; width: 640px; max-width: 100%; max-height: 90vh; overflow-y: auto; }
+  .modal h2 { margin-bottom: 16px; font-size: 18px; }
+  .modal .field { margin-bottom: 12px; }
+  .modal label { display: block; margin-bottom: 6px; font-size: 13px; color: #aaa; }
+  .modal .row { display: flex; gap: 8px; }
+  .modal input { flex: 1; min-width: 0; padding: 8px 10px; background: #111; border: 1px solid #444; border-radius: 6px; color: #eee; font-size: 13px; font-family: Consolas, monospace; }
+  .modal button { padding: 8px 14px; background: #2a2a2a; color: #eee; border: 1px solid #444; border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap; touch-action: manipulation; }
+  .modal button:hover { background: #3a3a3a; }
+  .modal .actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 18px; }
+  .modal .primary { background: #2d7d46; border-color: #2d7d46; color: #fff; }
+  .modal .primary:hover { background: #369b56; }
   
-  .settings-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-  .settings-table th {
-    text-align: left; padding: 12px; font-size: 12px; color: var(--text-muted);
-    text-transform: uppercase; border-bottom: 1px solid var(--border); font-weight: 600;
-  }
-  .settings-table td {
-    padding: 12px; border-bottom: 1px solid var(--border); font-size: 14px;
-  }
-  .settings-table input {
-    width: 100%; background: var(--bg-surface); border: 1px solid var(--border);
-    padding: 8px 12px; border-radius: 6px; color: var(--text-main); font-family: monospace;
-  }
-  .settings-table input:focus { outline: none; border-color: var(--accent); }
-  .settings-table button {
-    background: var(--bg-surface); border: 1px solid var(--border);
-    color: var(--text-main); padding: 8px 12px; border-radius: 6px; cursor: pointer;
-  }
-  .settings-table button:hover { background: var(--bg-surface-hover); }
-
-  .modal-actions { display: flex; justify-content: flex-end; gap: 12px; }
-
-  /* --- TOAST --- */
-  #toast { position: fixed; top: 80px; left: 50%; transform: translateX(-50%); background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-main); padding: 12px 24px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity 0.2s; pointer-events: none; z-index: 200; text-align: center; box-shadow: 0 10px 20px rgba(0,0,0,0.5); }
+  #toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); background: rgba(40,40,40,0.96); border: 1px solid #555; color: #eee; padding: 10px 20px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity 0.2s; pointer-events: none; z-index: 200; max-width: 80vw; text-align: center; }
   #toast.show { opacity: 1; }
-  #toast.error { border-color: var(--accent); color: var(--accent); }
-
-  @media (max-width: 768px) {
-    .app-container { flex-direction: column; }
-    .sidebar { width: 100%; height: auto; padding: 10px; flex-direction: row; align-items: center; justify-content: space-between; border-right: none; border-bottom: 1px solid var(--border); }
-    .profile-card { margin: 0; padding: 8px; display: none; }
-    .nav-section { margin: 0; }
-    .nav-section h3 { display: none; }
-    .nav-list { display: flex; gap: 8px; }
-    .nav-list li { padding: 8px 12px; border-radius: 6px; }
-    .nav-list li.active { background: var(--accent); }
-    
-    .top-nav { padding: 0 12px; height: 50px; }
-    .nav-tabs { display: none; }
-    .top-actions span { display: none; }
-    
-    .workspace { padding: 8px; }
-    .nav { width: 44px; height: 80px; font-size: 28px; }
-    #prev { left: 8px; } #next { right: 8px; }
-    
-    .action-bar { flex-direction: column; gap: 8px; }
-    .action-btn { padding: 16px; font-size: 24px; }
+  #toast.error { border-color: #a83a3a; }
+  
+  @media (max-width: 900px) {
+    header { padding: 6px 8px; gap: 6px; }
+    header .title { font-size: 13px; }
+    header button { padding: 5px 10px; font-size: 12px; }
+    #toolbar { padding: 6px 10px; gap: 8px; }
+    #toolbar button { width: 42px; height: 42px; font-size: 20px; }
+    #counter { font-size: 16px; }
+    .nav { width: 56px; height: 110px; font-size: 34px; opacity: 0.75; }
+    footer { flex-direction: column; gap: 10px; padding: 12px; }
+    .action-btn { width: 100%; min-width: 0; padding: 28px 16px; font-size: 38px; border-radius: 12px; }
+    .modal .actions { flex-wrap: wrap; }
+    .modal .actions button { flex: 1 1 auto; }
+    .modal .actions button:first-child { flex-basis: 100%; margin-right: 0 !important; }
+  }
+  @media (max-width: 420px) {
+    .action-btn { font-size: 32px; padding: 24px 12px; }
+    .nav { width: 46px; height: 90px; font-size: 28px; }
+    #toolbar button { width: 38px; height: 38px; font-size: 18px; }
+    #counter { font-size: 14px; }
   }
 </style>
 </head>
 <body>
-  <div id="progress-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 3px; background: transparent; z-index: 1000;"><div id="progress-bar" style="height: 100%; background: var(--accent); width: 0%; transition: width 0.3s ease;"></div></div>
-
-  <div class="app-container">
-    <!-- SIDEBAR -->
-    <aside class="sidebar">
-      <div class="profile-card">
-        <div class="avatar">📷</div>
-        <div class="profile-info">
-          <span>Profile</span><br>
-          <b>PhotoClassifier</b>
-        </div>
-      </div>
-
-      <div class="nav-section">
-        <h3>Settings</h3>
-        <ul class="nav-list">
-          <li class="active" onclick="openSettings()">📁 Libraries</li>
-        </ul>
-      </div>
-
-      <div class="nav-section">
-        <h3>Tools</h3>
-        <ul class="nav-list">
-          <li onclick="undoLast()">↶ Undo Action</li>
-          <li onclick="toggleFullscreen()">⛶ Fullscreen</li>
-          <li onclick="quitApp()" class="danger">✕ Close Application</li>
-        </ul>
-      </div>
-    </aside>
-
-    <!-- MAIN CONTENT -->
-    <main class="main-content">
-      <header class="top-nav">
-        <div class="nav-tabs">
-          <div class="nav-tab active">Photos</div>
-        </div>
-        <div class="top-actions">
-          <span id="counter">0 / 0</span>
-          <button class="btn" id="btn-undo" disabled>↶ Undo</button>
-        </div>
-      </header>
-
-      <div class="workspace">
-        <div class="viewer-panel" id="img-container">
-          <button id="prev" class="nav" title="Previous">‹</button>
-          <button id="next" class="nav" title="Next">›</button>
-          <img id="photo" alt="" draggable="false">
-          <div id="photo-placeholder">Click "Libraries" in the sidebar to select a folder</div>
-        </div>
-
-        <div class="toolbar">
-          <button id="b-down" title="Darker">☀−</button>
-          <span id="brightness-value">1.00</span>
-          <button id="b-up" title="Brighter">☀+</button>
-          <button id="b-reset" title="Reset">↺</button>
-        </div>
-
-        <div class="action-bar">
-          <button class="action-btn" id="btn-not-nude" disabled>Not Nude</button>
-          <button class="action-btn" id="btn-nude" disabled>Nude</button>
-        </div>
-      </div>
-    </main>
+  <div id="progress-container"><div id="progress-bar"></div></div>
+  
+  <header>
+    <span class="title">PhotoClassifier</span>
+    <span class="spacer"></span>
+    <button id="btn-fullscreen" title="Toggle Fullscreen (F)">⛶</button>
+    <button id="btn-undo" disabled title="Undo last move (Ctrl+Z)">↶ (0)</button>
+    <button id="btn-settings" title="Settings">⚙</button>
+    <button id="btn-quit" title="Exit">✕</button>
+  </header>
+  <div id="main">
+    <button id="prev" class="nav" title="Back (←)">‹</button>
+    <button id="next" class="nav" title="Next (→)">›</button>
+    <div id="img-container">
+      <img id="photo" alt="" draggable="false">
+      <div id="photo-placeholder">Click ⚙ to select a photo folder</div>
+    </div>
   </div>
-
-  <!-- SETTINGS MODAL -->
+  <div id="toolbar">
+    <button id="b-down" title="Darker (↓)">☀−</button>
+    <span id="brightness-value">1.00</span>
+    <button id="b-up" title="Brighter (↑)">☀+</button>
+    <button id="b-reset" title="Reset brightness (R)">↺</button>
+    
+    <span id="counter"></span>
+  </div>
+  <footer>
+    <button class="action-btn" id="btn-not-nude" disabled>Not Nude</button>
+    <button class="action-btn" id="btn-nude" disabled>Nude</button>
+  </footer>
   <div class="modal-bg" id="settings-modal">
     <div class="modal">
-      <h2>Folder Libraries</h2>
+      <h2>Folder Settings</h2>
       
-      <table class="settings-table">
-        <thead>
-          <tr>
-            <th style="width: 50px;">#</th>
-            <th>Role</th>
-            <th>Path</th>
-            <th style="width: 100px;">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>1</td>
-            <td>Source</td>
-            <td><input type="text" id="source-folder" placeholder="Select source folder..."></td>
-            <td><button onclick="pickFolder('source')">Browse</button></td>
-          </tr>
-          <tr>
-            <td>2</td>
-            <td id="label-not-nude-td">Not Nude</td>
-            <td><input type="text" id="not-nude-folder" placeholder="Select target folder..."></td>
-            <td><button onclick="pickFolder('not_nude')">Browse</button></td>
-          </tr>
-          <tr>
-            <td>3</td>
-            <td id="label-nude-td">Nude</td>
-            <td><input type="text" id="nude-folder" placeholder="Select target folder..."></td>
-            <td><button onclick="pickFolder('nude')">Browse</button></td>
-          </tr>
-        </tbody>
-      </table>
-
-      <div style="display: flex; gap: 16px; margin-bottom: 20px;">
-        <div style="flex: 1;">
-          <label style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px; display: block;">Red Button Name</label>
-          <input type="text" id="label-not-nude" style="width: 100%; background: var(--bg-surface); border: 1px solid var(--border); padding: 8px 12px; border-radius: 6px; color: white;">
+      <div class="field">
+        <label>Button 1 Name (Red)</label>
+        <div class="row">
+          <input type="text" id="label-not-nude" placeholder="Not Nude">
         </div>
-        <div style="flex: 1;">
-          <label style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px; display: block;">Green Button Name</label>
-          <input type="text" id="label-nude" style="width: 100%; background: var(--bg-surface); border: 1px solid var(--border); padding: 8px 12px; border-radius: 6px; color: white;">
+      </div>
+      <div class="field">
+        <label>Button 2 Name (Green)</label>
+        <div class="row">
+          <input type="text" id="label-nude" placeholder="Nude">
         </div>
       </div>
 
-      <div class="modal-actions">
-        <button class="btn" onclick="closeSettings()">Cancel</button>
-        <button class="btn btn-primary" onclick="saveSettings()">Save Changes</button>
+      <div class="field">
+        <label>Photo folder (source)</label>
+        <div class="row">
+          <input type="text" id="source-folder" placeholder="Type path or Browse...">
+          <button onclick="pickFolder('source')">Browse...</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Save Button 1 photos to</label>
+        <div class="row">
+          <input type="text" id="not-nude-folder" placeholder="Type path or Browse...">
+          <button onclick="pickFolder('not_nude')">Browse...</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Save Button 2 photos to</label>
+        <div class="row">
+          <input type="text" id="nude-folder" placeholder="Type path or Browse...">
+          <button onclick="pickFolder('nude')">Browse...</button>
+        </div>
+      </div>
+      <div class="actions">
+        <button onclick="closeSettings()">Cancel</button>
+        <button class="primary" onclick="saveSettings()">Save</button>
       </div>
     </div>
   </div>
-
   <div id="toast"></div>
-
 <script>
 let images = [];
 let currentIndex = 0;
 let settings = { source: '', not_nude: '', nude: '', label_not_nude: 'Not Nude', label_nude: 'Nude' };
 let brightness = 1.0;
-let scale = 1.0, translateX = 0, translateY = 0;
+
+let scale = 1.0;
+let translateX = 0, translateY = 0;
 
 const $ = (id) => document.getElementById(id);
 
@@ -1081,14 +924,13 @@ async function loadState() {
 function updateUI() {
   $('btn-not-nude').textContent = settings.label_not_nude || 'Not Nude';
   $('btn-nude').textContent = settings.label_nude || 'Nude';
-  $('label-not-nude-td').textContent = settings.label_not_nude || 'Not Nude';
-  $('label-nude-td').textContent = settings.label_nude || 'Nude';
 }
 
 function updateUndoButton(count) {
   const btn = $('btn-undo');
-  btn.textContent = '↶ Undo (' + count + ')';
+  btn.textContent = '↶ (' + count + ')';
   btn.disabled = count === 0;
+  btn.title = count > 0 ? 'Undo last move (' + count + ' available)' : 'Nothing to undo';
 }
 
 async function render() {
@@ -1100,7 +942,7 @@ async function render() {
 
   if (images.length === 0) {
     img.style.display = 'none'; img.removeAttribute('src'); ph.style.display = 'block';
-    ph.textContent = settings.source ? 'No images in the selected folder (or all processed)' : 'Click "Libraries" in the sidebar to select a folder';
+    ph.textContent = settings.source ? 'No images in the selected folder (or all processed)' : 'Click ⚙ to select a photo folder';
     counter.textContent = ''; btnNN.disabled = true; btnN.disabled = true; applyBrightness(); 
     progressBar.style.width = '0%';
     return;
@@ -1157,7 +999,6 @@ function applyTransform() {
     }
 }
 
-// ---------------- Pan & Zoom Logic ----------------
 $('img-container').addEventListener('wheel', (e) => {
     if (images.length === 0) return;
     if (e.ctrlKey) return;
@@ -1193,7 +1034,6 @@ window.addEventListener('mouseup', () => {
     if (isDragging) { isDragging = false; $('img-container').style.cursor = 'grab'; }
 });
 
-// Мобилки: Свайпы, Зум, Перетаскивание
 let touchMode = 'none', touchStartX = 0, touchStartY = 0;
 let dragStartTouchX = 0, dragStartTouchY = 0, initialDistance = 0;
 
@@ -1237,8 +1077,6 @@ $('img-container').addEventListener('touchend', (e) => {
     if (e.touches.length === 0) touchMode = 'none';
 }, { passive: false });
 
-// ---------------- API Functions ----------------
-
 async function classify(category) {
   if (images.length === 0) return;
   if (!settings[category]) { toast('Select a folder in settings first', true); return; }
@@ -1274,7 +1112,7 @@ async function deleteImage() {
 }
 
 async function pickFolder(key) {
-  const titles = { 'source': 'Select source folder', 'not_nude': 'Select target folder 1', 'nude': 'Select target folder 2' };
+  const titles = { 'source': 'Select photo folder', 'not_nude': 'Select folder for Button 1', 'nude': 'Select folder for Button 2' };
   toast('Opening folder selection dialog...');
   const r = await fetch('/api/pick-folder', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ title: titles[key] }) });
   const data = await r.json();
@@ -1308,14 +1146,18 @@ function closeSettings() { $('settings-modal').classList.remove('open'); }
 
 function toggleFullscreen() {
   if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen().catch(err => toast(`Error: ${err.message}`, true));
-  } else { document.exitFullscreen(); }
+    document.documentElement.requestFullscreen().catch(err => {
+      toast(`Error attempting to enable fullscreen: ${err.message}`, true);
+    });
+  } else {
+    document.exitFullscreen();
+  }
 }
 
 async function quitApp() {
   if (!confirm('Close application?')) return;
   try { await fetch('/api/quit', { method: 'POST' }); } catch (e) {}
-  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#666;font-family:sans-serif;">Application closed.</div>';
+  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#666;font-family:sans-serif;">Application closed. You can close the tab.</div>';
 }
 
 let toastTimer = null;
@@ -1324,6 +1166,7 @@ function toast(msg, isError) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
 }
 
+$('btn-fullscreen').onclick = toggleFullscreen;
 $('btn-settings').onclick = openSettings; $('btn-quit').onclick = quitApp; 
 $('btn-undo').onclick = undoLast;
 $('prev').onclick = prevImage; $('next').onclick = nextImage; $('b-up').onclick = () => changeBrightness(+0.1); $('b-down').onclick = () => changeBrightness(-0.1);
