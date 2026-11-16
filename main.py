@@ -31,7 +31,7 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.7.1"
+CURRENT_VERSION = "1.7.2"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 INSTALL_DIR = r"C:\!PV" 
@@ -570,7 +570,6 @@ def main():
 
     tk_root.after(100, tk_pump)
     
-    # Обертка для красивого выхода по Ctrl+C
     try:
         tk_root.mainloop()
     except KeyboardInterrupt:
@@ -624,10 +623,14 @@ HTML_PAGE = r'''<!DOCTYPE html>
   #toolbar button:active { background: #4a4a4a; }
   #brightness-value { font-family: Consolas, monospace; color: #ccc; font-size: 16px; min-width: 60px; text-align: center; }
   
-  #jump-input { width: 60px; height: 38px; background: #111; color: #fff; border: 1px solid #555; border-radius: 6px; text-align: center; font-family: Consolas, monospace; font-size: 14px; margin-left: 10px; }
-  #jump-input:focus { outline: none; border-color: #ff3b5c; }
-
-  #counter { margin-left: auto; font-size: 12px; color: #888; font-family: Consolas, monospace; padding-left: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45vw; }
+  #counter { 
+    margin-left: auto; 
+    font-size: 18px; 
+    color: #ddd; 
+    font-family: Consolas, monospace; 
+    padding-left: 12px; 
+    white-space: nowrap; 
+  }
   
   footer { display: flex; gap: 20px; padding: 16px 24px; justify-content: center; background: #1a1a1a; border-top: 1px solid #333; flex-wrap: wrap; z-index: 5; position: relative; }
   .action-btn { padding: 42px 96px; font-size: 48px; font-weight: 700; border: none; border-radius: 14px; cursor: pointer; min-width: 280px; letter-spacing: 1px; transition: transform 0.1s, filter 0.15s; touch-action: manipulation; box-shadow: 0 4px 12px rgba(0,0,0,0.4); word-break: break-word; }
@@ -662,8 +665,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     header button { padding: 5px 10px; font-size: 12px; }
     #toolbar { padding: 6px 10px; gap: 8px; }
     #toolbar button { width: 42px; height: 42px; font-size: 20px; }
-    #counter { max-width: 30vw; }
-    #jump-input { width: 50px; height: 34px; font-size: 12px; }
+    #counter { font-size: 16px; }
     .nav { width: 56px; height: 110px; font-size: 34px; opacity: 0.75; }
     footer { flex-direction: column; gap: 10px; padding: 12px; }
     .action-btn { width: 100%; min-width: 0; padding: 28px 16px; font-size: 38px; border-radius: 12px; }
@@ -675,6 +677,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     .action-btn { font-size: 32px; padding: 24px 12px; }
     .nav { width: 46px; height: 90px; font-size: 28px; }
     #toolbar button { width: 38px; height: 38px; font-size: 18px; }
+    #counter { font-size: 14px; }
   }
 </style>
 </head>
@@ -685,7 +688,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     <span class="title">PhotoClassifier</span>
     <span class="spacer"></span>
     <button id="btn-fullscreen" title="Toggle Fullscreen (F)">⛶</button>
-    <button id="btn-back" title="Back (←)">◀</button>
     <button id="btn-undo" disabled title="Undo last move (Ctrl+Z)">↶ (0)</button>
     <button id="btn-settings" title="Settings">⚙</button>
     <button id="btn-quit" title="Exit">✕</button>
@@ -703,8 +705,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     <span id="brightness-value">1.00</span>
     <button id="b-up" title="Brighter (↑)">☀+</button>
     <button id="b-reset" title="Reset brightness (R)">↺</button>
-    
-    <input type="number" id="jump-input" min="1" placeholder="#">
     
     <span id="counter"></span>
   </div>
@@ -831,7 +831,10 @@ async function render() {
   img.src = '/api/image?name=' + encodeURIComponent(name) + '&thumb=1&t=' + Date.now();
   
   img.style.display = 'block'; ph.style.display = 'none';
-  counter.textContent = (currentIndex + 1) + ' / ' + images.length + ' — ' + name; counter.title = name;
+  
+  counter.textContent = (currentIndex + 1) + ' / ' + images.length; 
+  counter.title = name; 
+  
   btnNN.disabled = false; btnN.disabled = false; applyBrightness();
   
   const progressPercent = ((currentIndex + 1) / images.length) * 100;
@@ -845,14 +848,6 @@ async function render() {
       const preloadImg = new Image();
       preloadImg.src = '/api/image?name=' + encodeURIComponent(nextName) + '&thumb=1';
   }
-
-  try {
-      const infoRes = await fetch('/api/info?name=' + encodeURIComponent(name));
-      const infoData = await infoRes.json();
-      if (infoData.ok) {
-          counter.textContent += ` [${infoData.res}, ${infoData.size}]`;
-      }
-  } catch(e) {}
 }
 
 function applyBrightness() {
@@ -870,17 +865,6 @@ function changeBrightness(delta) {
 function resetBrightness() { brightness = 1.0; applyBrightness(); }
 function nextImage() { if (images.length === 0) return; currentIndex = (currentIndex + 1) % images.length; brightness = 1.0; render(); }
 function prevImage() { if (images.length === 0) return; currentIndex = (currentIndex - 1 + images.length) % images.length; brightness = 1.0; render(); }
-
-function jumpToImage() {
-    const val = parseInt($('jump-input').value);
-    if (!isNaN(val) && val > 0 && val <= images.length) {
-        currentIndex = val - 1;
-        brightness = 1.0;
-        render();
-    }
-    $('jump-input').value = '';
-    $('jump-input').blur();
-}
 
 function applyTransform() {
     const img = $('photo');
@@ -1073,10 +1057,10 @@ function toast(msg, isError) {
 })();
 
 $('btn-fullscreen').onclick = toggleFullscreen;
-$('btn-settings').onclick = openSettings; $('btn-quit').onclick = quitApp; $('btn-back').onclick = prevImage; $('btn-undo').onclick = undoLast;
+$('btn-settings').onclick = openSettings; $('btn-quit').onclick = quitApp; 
+$('btn-undo').onclick = undoLast;
 $('prev').onclick = prevImage; $('next').onclick = nextImage; $('b-up').onclick = () => changeBrightness(+0.1); $('b-down').onclick = () => changeBrightness(-0.1);
 $('b-reset').onclick = resetBrightness; $('btn-not-nude').onclick = () => classify('not_nude'); $('btn-nude').onclick = () => classify('nude');
-$('jump-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') jumpToImage(); });
 
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
