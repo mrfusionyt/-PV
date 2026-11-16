@@ -31,7 +31,7 @@ from flask import Flask, request, jsonify, send_file
 # =====================================================================
 # UPDATE SETTINGS
 # =====================================================================
-CURRENT_VERSION = "1.8.2"
+CURRENT_VERSION = "1.8.3"
 GITHUB_USER = "mrfusionyt"
 GITHUB_REPO = "-PV"
 # =====================================================================
@@ -853,8 +853,9 @@ HTML_PAGE = r'''<!DOCTYPE html>
         </div>
       </div>
       <div class="actions">
+        <button onclick="restartServer()" style="margin-right:auto;" title="Reload settings and rescan source folder">🔄 Restart server</button>
         <button onclick="closeSettings()">Cancel</button>
-        <button class="primary" onclick="saveSettings()">Save</button>
+        <button class="primary" onclick="saveSettings()">Save Changes</button>
       </div>
     </div>
   </div>
@@ -1136,6 +1137,24 @@ async function saveSettings() {
   settings = body; images = data.images; currentIndex = 0; brightness = 1.0;
   updateUI();
   updateUndoButton(data.undo_count); render(); closeSettings(); toast('Settings saved');
+}
+
+async function restartServer() {
+  try {
+    const r = await fetch('/api/restart', { method: 'POST' });
+    const data = await r.json();
+    if (!data.ok) { toast('Restart error', true); return; }
+    images = data.images || []; settings = data.settings || settings; currentIndex = 0; brightness = 1.0;
+    
+    $('source-folder').value = settings.source || ''; 
+    $('not-nude-folder').value = settings.not_nude || ''; 
+    $('nude-folder').value = settings.nude || '';
+    $('label-not-nude').value = settings.label_not_nude || 'Not Nude';
+    $('label-nude').value = settings.label_nude || 'Nude';
+    
+    updateUI();
+    updateUndoButton(data.undo_count || 0); render(); closeSettings(); toast('Server restarted');
+  } catch (e) { toast('Error: ' + e.message, true); }
 }
 
 function openSettings() { $('settings-modal').classList.add('open'); }
